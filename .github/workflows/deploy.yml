@@ -1,0 +1,56 @@
+name: Build & Deploy (superadmin-web)
+
+# Independent CI/CD for the superadmin-web service.
+# On push to main: build the Docker image, push it to GHCR, then SSH into the
+# shared EC2 host and restart only this one service from the new image.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-superadmin-web
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/tasqbots/jainerp-superadmin-web
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Deploy on EC2 (restart superadmin-web only)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/jainerp
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USER }} --password-stdin
+            docker compose -f docker-compose.aws.yml --env-file .env.aws pull superadmin-web
+            docker compose -f docker-compose.aws.yml --env-file .env.aws up -d superadmin-web
+            docker image prune -f
