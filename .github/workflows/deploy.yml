@@ -1,9 +1,5 @@
 name: Build & Deploy (superadmin-web)
 
-# Independent CI/CD for the superadmin-web service.
-# On push to main: build the Docker image, push it to GHCR, then SSH into the
-# shared EC2 host and restart only this one service from the new image.
-
 on:
   push:
     branches: [main]
@@ -42,15 +38,22 @@ jobs:
             ${{ env.IMAGE }}:${{ github.sha }}
 
       - name: Deploy on EC2 (restart superadmin-web only)
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            set -euo pipefail
-            cd /opt/jainerp
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USER }} --password-stdin
-            docker compose -f docker-compose.aws.yml --env-file .env.aws pull superadmin-web
-            docker compose -f docker-compose.aws.yml --env-file .env.aws up -d superadmin-web
-            docker image prune -f
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          GHCR_USER: ${{ secrets.GHCR_USER }}
+        run: |
+          echo "$SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh -i /tmp/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
+            "$EC2_USER@$EC2_HOST" \
+            "cd /opt/jainerp && \
+             echo $GHCR_PAT | docker login ghcr.io -u $GHCR_USER --password-stdin && \
+             docker compose -f docker-compose.aws.yml --env-file .env.aws pull superadmin-web && \
+             docker compose -f docker-compose.aws.yml --env-file .env.aws up -d superadmin-web && \
+             docker image prune -f"
+          rm -f /tmp/deploy_key
