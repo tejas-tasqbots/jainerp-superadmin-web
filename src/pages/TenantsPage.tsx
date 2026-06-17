@@ -5,7 +5,7 @@ import type { TenantRow } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
 
 const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
-const TIERS = ['pooled', 'dedicated_schema', 'dedicated_database'];
+const TIERS = ['pooled', 'dedicated'];
 
 export function TenantsPage() {
   const [rows, setRows] = useState<TenantRow[]>([]);

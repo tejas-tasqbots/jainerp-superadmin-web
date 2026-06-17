@@ -5,7 +5,7 @@ import type { Invoice, License, TenantDetail } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal } from '../components/ui';
 
 const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
-const TIERS = ['pooled', 'dedicated_schema', 'dedicated_database'];
+const TIERS = ['pooled', 'dedicated'];
 type Tab = 'overview' | 'billing' | 'people' | 'licenses';
 
 export function TenantDetailPage() {
