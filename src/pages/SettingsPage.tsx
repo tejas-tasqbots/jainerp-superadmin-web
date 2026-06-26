@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, publicApi, loadSession, type ApiMeta } from '../api/client';
 import type { AdminUser, AuditEvent } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
+import { RecoveryCodes } from '../components/recovery';
+
+/** Display an E.164 (+91…) mobile as bare 10 digits for India-only UX. */
+const display10 = (m: string | null | undefined) => (m ?? '').replace(/^\+91/, '');
 
 type Tab = 'users' | 'audit' | 'account';
 
@@ -26,7 +30,10 @@ function UsersTab() {
   const [rows, setRows] = useState<AdminUser[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+
+  const canManage = (loadSession()?.user.admin_role ?? 'superadmin') === 'superadmin';
 
   const load = useCallback(() => {
     api<AdminUser[]>('/admin/users').then((r) => setRows(r.data)).catch(setError);
@@ -47,10 +54,24 @@ function UsersTab() {
     <div>
       <ErrorBox error={error} />
       {notice && <div className="success-box" data-testid="users-notice">{notice}</div>}
-      <div className="toolbar">
-        <div className="grow" />
-        <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add super-admin user</button>
-      </div>
+      {createdLink && (
+        <div className="success-box" data-testid="set-password-link">
+          User created. Share this set-password link with them (valid 48h):
+          <br />
+          <code style={{ wordBreak: 'break-all' }}>{`${window.location.origin}/set-password?token=${createdLink}`}</code>
+          <br />
+          <button className="btn sm" type="button" style={{ marginTop: 6 }}
+            onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/set-password?token=${createdLink}`)}>
+            Copy link
+          </button>
+        </div>
+      )}
+      {canManage && (
+        <div className="toolbar">
+          <div className="grow" />
+          <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add super-admin user</button>
+        </div>
+      )}
       <table className="data">
         <thead><tr><th>Name</th><th>Email</th><th>Mobile</th><th>Role</th><th>Status</th><th></th></tr></thead>
         <tbody>
@@ -58,24 +79,28 @@ function UsersTab() {
             <tr key={u.id}>
               <td>{u.name}</td>
               <td>{u.email}</td>
-              <td className="mono">{u.mobile}</td>
+              <td className="mono">{display10(u.mobile)}</td>
               <td>{u.role}</td>
               <td><Badge value={u.is_active ? 'active' : 'suspended'} /></td>
               <td>
-                <button className="btn sm" onClick={() => run(
-                  () => api(`/admin/users/${u.id}/reset-mfa`, { method: 'POST', body: {} }),
-                  `MFA reset for ${u.email} — they will re-enrol on next login`,
-                )}>Reset MFA</button>{' '}
-                <button className="btn sm" onClick={async () => {
-                  const r = (await run(() =>
-                    api<{ temp_password: string }>(`/admin/users/${u.id}/reset-password`, { method: 'POST', body: {} }),
-                  )) as { data: { temp_password: string } } | undefined;
-                  if (r) setNotice(`Temp password for ${u.email}: ${r.data.temp_password} (deliver out-of-band)`);
-                }}>Reset password</button>{' '}
-                <button className="btn sm danger" onClick={() => run(
-                  () => api(`/admin/users/${u.id}`, { method: 'PATCH', body: { is_active: !u.is_active } }),
-                  u.is_active ? 'User deactivated' : 'User reactivated',
-                )}>{u.is_active ? 'Deactivate' : 'Reactivate'}</button>
+                {canManage ? (
+                  <>
+                    <button className="btn sm" type="button" onClick={() => run(
+                      () => api(`/admin/users/${u.id}/reset-mfa`, { method: 'POST', body: {} }),
+                      `MFA reset for ${u.email} — they will re-enrol on next login`,
+                    )}>Reset MFA</button>{' '}
+                    <button className="btn sm" type="button" onClick={async () => {
+                      const r = (await run(() =>
+                        api<{ temp_password: string }>(`/admin/users/${u.id}/reset-password`, { method: 'POST', body: {} }),
+                      )) as { data: { temp_password: string } } | undefined;
+                      if (r) setNotice(`Temp password for ${u.email}: ${r.data.temp_password} (deliver out-of-band)`);
+                    }}>Reset password</button>{' '}
+                    <button className="btn sm danger" type="button" onClick={() => run(
+                      () => api(`/admin/users/${u.id}`, { method: 'PATCH', body: { is_active: !u.is_active } }),
+                      u.is_active ? 'User deactivated' : 'User reactivated',
+                    )}>{u.is_active ? 'Deactivate' : 'Reactivate'}</button>
+                  </>
+                ) : <span className="muted">—</span>}
               </td>
             </tr>
           ))}
@@ -84,27 +109,32 @@ function UsersTab() {
 
       {showCreate && (
         <Modal title="Add super-admin user" onClose={() => setShowCreate(false)}>
-          <CreateUserForm onCreated={(msg) => { setShowCreate(false); load(); setNotice(msg); }} />
+          <CreateUserForm onCreated={(token) => { setShowCreate(false); load(); setNotice(null); setCreatedLink(token); }} />
         </Modal>
       )}
     </div>
   );
 }
 
-function CreateUserForm({ onCreated }: { onCreated: (msg: string) => void }) {
+function CreateUserForm({ onCreated }: { onCreated: (token: string) => void }) {
   const [form, setForm] = useState({ name: '', email: '', mobile: '', role: 'support' });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
+  const setMobile = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm({ ...form, mobile: e.target.value.replace(/\D/g, '').slice(0, 10) });
 
   return (
     <ActionForm submitLabel="Create"
       onSubmit={async () => {
         const { data } = await api<{ set_password_token: string }>('/admin/users', { method: 'POST', body: form });
-        onCreated(`User created. Set-password token (deliver out-of-band): ${data.set_password_token}`);
+        onCreated(data.set_password_token);
       }}>
       <label className="field"><span>Name</span><input name="user_name" value={form.name} onChange={set('name')} required /></label>
       <label className="field"><span>Email</span><input name="user_email" type="email" value={form.email} onChange={set('email')} required /></label>
-      <label className="field"><span>Mobile (+91…)</span><input name="user_mobile" value={form.mobile} onChange={set('mobile')} required /></label>
+      <label className="field"><span>Mobile</span>
+        <input name="user_mobile" value={form.mobile} onChange={setMobile} inputMode="numeric"
+          placeholder="10-digit mobile" pattern="\d{10}" maxLength={10} required />
+      </label>
       <label className="field"><span>Role</span>
         <select name="user_role" value={form.role} onChange={set('role')}>
           <option value="superadmin">superadmin</option>
@@ -169,6 +199,7 @@ function AccountTab() {
   return (
     <div style={{ maxWidth: 480 }}>
       {notice && <div className="success-box">{notice}</div>}
+      <ProfileCard onSaved={() => setNotice('Profile updated.')} />
       <div className="card">
         <h2>Change password</h2>
         <p className="muted">Changing your password signs you out of all devices.</p>
@@ -201,11 +232,52 @@ function AccountTab() {
           <label className="field"><span>TOTP code</span><input value={totp} onChange={(e) => setTotp(e.target.value)} required /></label>
         </ActionForm>
         {codes && (
-          <div className="recovery-codes" data-testid="new-recovery-codes">
-            {codes.map((c) => <code key={c}>{c}</code>)}
+          <div data-testid="new-recovery-codes">
+            <RecoveryCodes codes={codes} accountLabel={session?.user.email ?? session?.user.mobile} />
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Self-service profile editor: name / email / 10-digit mobile (#6). */
+function ProfileCard({ onSaved }: { onSaved: () => void }) {
+  const [form, setForm] = useState({ name: '', email: '', mobile: '' });
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    api<{ name: string | null; email: string | null; mobile: string }>('/admin/me')
+      .then((r) => {
+        setForm({
+          name: r.data.name ?? '',
+          email: r.data.email ?? '',
+          mobile: (r.data.mobile || '').replace(/^\+91/, ''),
+        });
+        setLoaded(true);
+      })
+      .catch(setError);
+  }, []);
+
+  if (!loaded) return <div className="card"><ErrorBox error={error} /><p className="muted">Loading profile…</p></div>;
+
+  return (
+    <div className="card">
+      <h2>My profile</h2>
+      <p className="muted">Update your own name, email and mobile.</p>
+      <ActionForm submitLabel="Save profile"
+        onSubmit={async () => {
+          await api('/admin/me', { method: 'PATCH', body: form });
+          onSaved();
+        }}>
+        <label className="field"><span>Name</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+        <label className="field"><span>Email</span><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
+        <label className="field"><span>Mobile</span>
+          <input value={form.mobile} inputMode="numeric" placeholder="10-digit mobile" pattern="\d{10}" maxLength={10}
+            onChange={(e) => setForm({ ...form, mobile: e.target.value.replace(/\D/g, '').slice(0, 10) })} required />
+        </label>
+      </ActionForm>
     </div>
   );
 }

@@ -1,11 +1,20 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, Landmark, Users, Settings as SettingsIcon, LogOut } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
 import { LoginPage } from './pages/LoginPage';
+import { SetPasswordPage } from './pages/SetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TenantDetailPage } from './pages/TenantDetailPage';
 import { TenantsPage } from './pages/TenantsPage';
+
+const navItems = [
+  { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} />, end: true },
+  { to: '/mandirs', label: 'Manage Mandir', icon: <Landmark size={18} /> },
+  { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
+  { to: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
+];
 
 function Layout() {
   const { session, logout } = useAuth();
@@ -14,26 +23,30 @@ function Layout() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand">Jain<em>ERP</em></div>
+        <div className="brand">
+          Jain<em>ERP</em>
+          <div className="brand-sub">Super Admin Console</div>
+        </div>
         <nav>
-          <NavLink to="/" end>Dashboard</NavLink>
-          <NavLink to="/mandirs">Manage Mandir</NavLink>
-          <NavLink to="/devotees">Manage Devotees</NavLink>
-          <NavLink to="/settings">Settings</NavLink>
+          {navItems.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => (isActive ? 'active' : '')}>
+              <span className="flex-shrink-0">{item.icon}</span>
+              <span className="truncate">{item.label}</span>
+            </NavLink>
+          ))}
         </nav>
-        <div className="spacer" />
         <div className="whoami">
-          {session?.user.name ?? session?.user.email}
-          <br />
+          <div className="name">{session?.user.name ?? session?.user.email}</div>
           <a
             href="#logout"
+            className="inline-flex items-center gap-1.5 mt-1.5"
             onClick={async (e) => {
               e.preventDefault();
               await logout();
               navigate('/login');
             }}
           >
-            Sign out
+            <LogOut size={13} /> Sign out
           </a>
         </div>
       </aside>
@@ -56,6 +69,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route path="/set-password" element={<SetPasswordPage />} />
       <Route path="/*" element={session ? <Layout /> : <Navigate to="/login" replace />} />
     </Routes>
   );

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBox } from '../components/ui';
+import { RecoveryCodes } from '../components/recovery';
 
 type Step =
   | { kind: 'password' }
@@ -15,6 +16,7 @@ export function LoginPage() {
   const [step, setStep] = useState<Step>({ kind: 'password' });
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -88,13 +90,28 @@ export function LoginPage() {
             </label>
             <label className="field">
               <span>Password</span>
-              <input
-                name="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ width: '100%', paddingRight: 64 }}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280',
+                    fontSize: 13, padding: 4,
+                  }}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </label>
             <button className="btn primary" style={{ width: '100%' }} disabled={busy}>
               {busy ? 'Checking…' : 'Continue'}
@@ -125,11 +142,7 @@ export function LoginPage() {
             <p>
               <strong>Recovery codes</strong> — shown once, store safely:
             </p>
-            <div className="recovery-codes" data-testid="recovery-codes">
-              {step.codes.map((c) => (
-                <code key={c}>{c}</code>
-              ))}
-            </div>
+            <RecoveryCodes codes={step.codes} accountLabel={identifier} />
             <form onSubmit={submitCode}>
               <label className="field">
                 <span>6-digit code from your app</span>
