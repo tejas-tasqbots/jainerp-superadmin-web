@@ -89,19 +89,44 @@ export function TenantsPage() {
   );
 }
 
+const TEMPLE_TYPES = ['jain', 'hindu', 'sikh', 'buddhist', 'gurudwara', 'church'];
+/** Send only filled-in optional fields so the API keeps them null otherwise. */
+function pick<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== '' && v != null)) as Partial<T>;
+}
+
 function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({
-    name: '',
-    plan: 'standard',
-    billing_cycle: 'monthly',
-    tenancy_tier: 'pooled',
-    admin_name: '',
-    admin_mobile: '',
-    city: '',
-    state: '',
+    // mandir
+    name: '', temple_type: 'jain', plan: 'standard', billing_cycle: 'monthly', tenancy_tier: 'pooled',
+    // admin (signs into devmandir.com)
+    admin_name: '', admin_mobile: '', admin_email: '',
+    // address
+    line1: '', line2: '', state: '', city: '', pincode: '',
+    // public mandir contact (receipts + directory)
+    mandir_mobile: '', mandir_email: '', website: '',
+    // legal / tax
+    gstin: '', pan: '', tan: '', reg_80g_number: '', reg_12a_number: '', reg_12ab_number: '',
+    // bank / UPI
+    upi_id: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_name: '',
+    // directory listing
+    global_sync_enabled: false,
   });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
+
+  // States + cities from the bundled India geo lookup.
+  const [states, setStates] = useState<string[]>([]);
+  const [cities, setCities] = useState<string[]>([]);
+  useEffect(() => {
+    api<string[]>('/admin/geo/states').then((r) => setStates(r.data)).catch(() => setStates([]));
+  }, []);
+  useEffect(() => {
+    if (!form.state) { setCities([]); return; }
+    api<string[]>(`/admin/geo/states/${encodeURIComponent(form.state)}/cities`)
+      .then((r) => setCities(r.data))
+      .catch(() => setCities([]));
+  }, [form.state]);
 
   return (
     <Modal title="Onboard new mandir" onClose={onClose}>
@@ -113,16 +138,29 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
             method: 'POST',
             body: {
               name: form.name,
+              temple_type: form.temple_type,
               plan: form.plan,
               billing_cycle: form.billing_cycle,
               tenancy_tier: form.tenancy_tier,
-              admin_contact: { name: form.admin_name, mobile: form.admin_mobile },
-              address: { city: form.city, state: form.state },
+              admin_contact: pick({ name: form.admin_name, mobile: form.admin_mobile, email: form.admin_email }),
+              address: pick({ line1: form.line1, line2: form.line2, state: form.state, city: form.city, pincode: form.pincode }),
+              global_sync_enabled: form.global_sync_enabled,
+              ...pick({
+                mandir_mobile: form.mandir_mobile, mandir_email: form.mandir_email, website: form.website,
+                gstin: form.gstin, pan: form.pan, tan: form.tan,
+                reg_80g_number: form.reg_80g_number, reg_12a_number: form.reg_12a_number, reg_12ab_number: form.reg_12ab_number,
+                upi_id: form.upi_id, bank_account_name: form.bank_account_name, bank_account_no: form.bank_account_no,
+                bank_ifsc: form.bank_ifsc, bank_name: form.bank_name,
+              }),
             },
           });
         }}
       >
-        <label className="field"><span>Mandir name</span><input name="name" value={form.name} onChange={set('name')} required /></label>
+        <h4 className="form-section">Mandir & plan</h4>
+        <label className="field"><span>Mandir name *</span><input name="name" value={form.name} onChange={set('name')} required /></label>
+        <label className="field"><span>Temple type</span>
+          <select name="temple_type" value={form.temple_type} onChange={set('temple_type')}>{TEMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+        </label>
         <label className="field"><span>Plan</span>
           <select name="plan" value={form.plan} onChange={set('plan')}>{PLANS.map((p) => <option key={p}>{p}</option>)}</select>
         </label>
@@ -137,10 +175,56 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
             {TIERS.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
           </select>
         </label>
-        <label className="field"><span>Admin contact name</span><input name="admin_name" value={form.admin_name} onChange={set('admin_name')} required /></label>
-        <label className="field"><span>Admin mobile (+91…)</span><input name="admin_mobile" value={form.admin_mobile} onChange={set('admin_mobile')} required /></label>
-        <label className="field"><span>City</span><input name="city" value={form.city} onChange={set('city')} /></label>
-        <label className="field"><span>State</span><input name="state" value={form.state} onChange={set('state')} /></label>
+
+        <h4 className="form-section">Admin contact (signs into devmandir.com)</h4>
+        <label className="field"><span>Admin name *</span><input name="admin_name" value={form.admin_name} onChange={set('admin_name')} required /></label>
+        <label className="field"><span>Admin mobile (10-digit) *</span>
+          <input name="admin_mobile" value={form.admin_mobile} onChange={set('admin_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" required />
+        </label>
+        <label className="field"><span>Admin email</span><input name="admin_email" type="email" value={form.admin_email} onChange={set('admin_email')} /></label>
+
+        <h4 className="form-section">Address</h4>
+        <label className="field"><span>Address line 1</span><input name="line1" value={form.line1} onChange={set('line1')} /></label>
+        <label className="field"><span>Address line 2</span><input name="line2" value={form.line2} onChange={set('line2')} /></label>
+        <label className="field"><span>State</span>
+          <select name="state" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, city: '' })}>
+            <option value="">Select state…</option>
+            {states.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>City</span>
+          <input name="city" list="city-options" value={form.city} onChange={set('city')} placeholder={form.state ? 'Select or type…' : 'Pick a state first'} />
+          <datalist id="city-options">{cities.map((c) => <option key={c} value={c} />)}</datalist>
+        </label>
+        <label className="field"><span>Pincode</span><input name="pincode" value={form.pincode} onChange={set('pincode')} inputMode="numeric" maxLength={6} placeholder="411001" /></label>
+
+        <h4 className="form-section">Mandir contact (shown on receipts & directory)</h4>
+        <label className="field"><span>Mandir phone (10-digit)</span>
+          <input name="mandir_mobile" value={form.mandir_mobile} onChange={set('mandir_mobile')} inputMode="numeric" maxLength={10} placeholder="defaults to admin mobile" />
+        </label>
+        <label className="field"><span>Mandir email</span><input name="mandir_email" type="email" value={form.mandir_email} onChange={set('mandir_email')} /></label>
+        <label className="field"><span>Website</span><input name="website" value={form.website} onChange={set('website')} placeholder="https://…" /></label>
+
+        <h4 className="form-section">Legal & tax (for 80G receipts)</h4>
+        <label className="field"><span>GSTIN</span><input name="gstin" value={form.gstin} onChange={set('gstin')} maxLength={15} placeholder="15 chars" /></label>
+        <label className="field"><span>PAN</span><input name="pan" value={form.pan} onChange={set('pan')} maxLength={10} placeholder="AAAAA9999A" /></label>
+        <label className="field"><span>TAN</span><input name="tan" value={form.tan} onChange={set('tan')} /></label>
+        <label className="field"><span>80G reg. number</span><input name="reg_80g_number" value={form.reg_80g_number} onChange={set('reg_80g_number')} /></label>
+        <label className="field"><span>12A reg. number</span><input name="reg_12a_number" value={form.reg_12a_number} onChange={set('reg_12a_number')} /></label>
+        <label className="field"><span>12AB reg. number</span><input name="reg_12ab_number" value={form.reg_12ab_number} onChange={set('reg_12ab_number')} /></label>
+
+        <h4 className="form-section">Bank & UPI (receipt payment details)</h4>
+        <label className="field"><span>UPI ID</span><input name="upi_id" value={form.upi_id} onChange={set('upi_id')} placeholder="mandir@upi" /></label>
+        <label className="field"><span>Bank account name</span><input name="bank_account_name" value={form.bank_account_name} onChange={set('bank_account_name')} /></label>
+        <label className="field"><span>Bank account no.</span><input name="bank_account_no" value={form.bank_account_no} onChange={set('bank_account_no')} /></label>
+        <label className="field"><span>IFSC</span><input name="bank_ifsc" value={form.bank_ifsc} onChange={set('bank_ifsc')} /></label>
+        <label className="field"><span>Bank name</span><input name="bank_name" value={form.bank_name} onChange={set('bank_name')} /></label>
+
+        <h4 className="form-section">Directory</h4>
+        <label className="field-check">
+          <input type="checkbox" checked={form.global_sync_enabled} onChange={(e) => setForm({ ...form, global_sync_enabled: e.target.checked })} />
+          <span>List on the public devotee/maharaj directory (global sync)</span>
+        </label>
       </ActionForm>
     </Modal>
   );

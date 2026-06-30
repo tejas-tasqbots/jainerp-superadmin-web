@@ -150,6 +150,14 @@
   }
   label.field { display: block; margin-bottom: 12px; }
   label.field > span { @apply block text-sm font-medium text-slate-700 mb-1; }
+  /* Section header inside a long onboarding form */
+  .form-section {
+    @apply text-xs font-bold uppercase tracking-wide text-slate-500 mt-4 mb-2 pb-1;
+    border-bottom: 1px solid var(--color-border, #e2e8f0);
+  }
+  .form-section:first-child { @apply mt-0; }
+  label.field-check { @apply flex items-center gap-2 text-sm text-slate-700 mb-3; }
+  label.field-check > span { @apply font-medium; }
 
   /* ── Badges (pill) ──────────────────────────────────────────────────────── */
   .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold; }
