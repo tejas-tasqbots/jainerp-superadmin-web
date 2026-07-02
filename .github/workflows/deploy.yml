@@ -31,7 +31,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./apps/superadmin-web
+          file: ./apps/superadmin-web/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
@@ -54,6 +55,5 @@ jobs:
             "cd /opt/jainerp && \
              echo $GHCR_PAT | docker login ghcr.io -u $GHCR_USER --password-stdin && \
              docker compose -f docker-compose.aws.yml --env-file .env.aws pull superadmin-web && \
-             docker compose -f docker-compose.aws.yml --env-file .env.aws up -d superadmin-web && \
-             docker image prune -f"
+             docker compose -f docker-compose.aws.yml --env-file .env.aws up -d superadmin-web"
           rm -f /tmp/deploy_key
