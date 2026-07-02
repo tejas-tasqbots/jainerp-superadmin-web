@@ -120,6 +120,23 @@ export interface Devotee {
   created_at: string;
 }
 
+export interface MaharajProfile {
+  id: string;
+  rep_user_id: string | null;
+  name: string;
+  type: 'maharaj' | 'mataji';
+  samuday: string | null;
+  city: string | null;
+  state: string | null;
+  current_city: string | null;
+  diksha_year: number | null;
+  guru_name: string | null;
+  verified: boolean;
+  verified_at: string | null;
+  followers_count: number;
+  created_at: string;
+}
+
 export interface AdminUser {
   id: string;
   name: string | null;
