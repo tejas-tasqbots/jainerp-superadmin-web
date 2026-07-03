@@ -6,7 +6,13 @@ import { ActionForm, Badge, ErrorBox, Modal } from '../components/ui';
 
 const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
 const TIERS = ['pooled', 'dedicated'];
-type Tab = 'overview' | 'billing' | 'people' | 'licenses';
+type Tab = 'overview' | 'billing' | 'users' | 'people' | 'licenses';
+
+const MANDIR_ROLES = ['temple_admin', 'cashier', 'accountant', 'priest', 'volunteer', 'viewer', 'bhojanshala_cashier'];
+interface MandirUser {
+  id: string; user_id: string; roles: string[]; is_active: boolean; joined_at: string;
+  name: string | null; mobile: string; email: string | null;
+}
 
 export function TenantDetailPage() {
   const { id = '' } = useParams();
@@ -32,15 +38,16 @@ export function TenantDetailPage() {
       {notice && <div className="success-box" data-testid="notice">{notice}</div>}
 
       <div className="tabs">
-        {(['overview', 'billing', 'people', 'licenses'] as Tab[]).map((t) => (
+        {(['overview', 'billing', 'users', 'people', 'licenses'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t === 'people' ? 'Trustees & Requirements' : t[0].toUpperCase() + t.slice(1)}
+            {t === 'people' ? 'Trustees & Requirements' : t === 'users' ? 'Mandir Users' : t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
 
       {tab === 'overview' && <OverviewTab tenant={tenant} onChanged={(msg) => { setNotice(msg); load(); }} />}
       {tab === 'billing' && <BillingTab tenant={tenant} onChanged={(msg) => { setNotice(msg); load(); }} />}
+      {tab === 'users' && <UsersTab tenant={tenant} onNotice={setNotice} />}
       {tab === 'people' && <PeopleTab tenant={tenant} onChanged={(msg) => { setNotice(msg); load(); }} />}
       {tab === 'licenses' && <LicensesTab tenant={tenant} onChanged={(msg) => { setNotice(msg); }} />}
     </div>
@@ -319,6 +326,122 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
         </table>
       </div>
     </div>
+  );
+}
+
+// ---------------- Mandir portal users ----------------
+function UsersTab({ tenant, onNotice }: { tenant: TenantDetail; onNotice: (msg: string) => void }) {
+  const [users, setUsers] = useState<MandirUser[]>([]);
+  const [error, setError] = useState<unknown>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState<MandirUser | null>(null);
+
+  const load = useCallback(() => {
+    api<MandirUser[]>(`/admin/tenants/${tenant.id}/users`).then((r) => setUsers(r.data)).catch(setError);
+  }, [tenant.id]);
+  useEffect(load, [load]);
+
+  async function run(fn: () => Promise<unknown>, msg: string) {
+    setError(null);
+    try { await fn(); load(); onNotice(msg); } catch (e) { setError(e); }
+  }
+
+  return (
+    <div>
+      <ErrorBox error={error} />
+      <div className="card">
+        <div className="toolbar">
+          <h2 style={{ margin: 0 }}>Mandir portal users</h2>
+          <div className="grow" />
+          <button className="btn primary sm" onClick={() => setShowAdd(true)}>+ Add user</button>
+        </div>
+        <p className="muted">Staff who sign into this mandir's admin portal. Roles control what they can do (temple_admin has full access).</p>
+        <table className="data">
+          <thead><tr><th>Name</th><th>Mobile</th><th>Roles</th><th>Active</th><th>Joined</th><th></th></tr></thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id}>
+                <td>{u.name ?? <span className="muted">—</span>}</td>
+                <td className="mono">{u.mobile}</td>
+                <td>{u.roles.join(', ')}</td>
+                <td><Badge value={u.is_active} /></td>
+                <td>{formatDate(u.joined_at)}</td>
+                <td>
+                  <button className="btn sm" onClick={() => setEditing(u)}>Edit</button>{' '}
+                  <button className="btn sm" onClick={() => run(
+                    () => api(`/admin/tenants/${tenant.id}/users/${u.id}`, { method: 'PATCH', body: { is_active: !u.is_active } }),
+                    u.is_active ? 'User deactivated' : 'User activated',
+                  )}>{u.is_active ? 'Deactivate' : 'Activate'}</button>{' '}
+                  <button className="btn sm danger" onClick={() => {
+                    if (confirm(`Remove ${u.name ?? u.mobile} from this mandir? They lose portal access.`)) {
+                      run(() => api(`/admin/tenants/${tenant.id}/users/${u.id}`, { method: 'DELETE' }), 'User removed');
+                    }
+                  }}>Remove</button>
+                </td>
+              </tr>
+            ))}
+            {users.length === 0 && <tr><td colSpan={6} className="muted">No portal users yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {showAdd && (
+        <Modal title="Add mandir user" onClose={() => setShowAdd(false)}>
+          <MandirUserForm tenantId={tenant.id} onDone={() => { setShowAdd(false); load(); onNotice('Mandir user added'); }} />
+        </Modal>
+      )}
+      {editing && (
+        <Modal title={`Edit ${editing.name ?? editing.mobile}`} onClose={() => setEditing(null)}>
+          <MandirUserForm tenantId={tenant.id} user={editing} onDone={() => { setEditing(null); load(); onNotice('Mandir user updated'); }} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function MandirUserForm({ tenantId, user, onDone }: { tenantId: string; user?: MandirUser; onDone: () => void }) {
+  const [form, setForm] = useState({
+    mobile: user?.mobile?.replace('+91', '') ?? '',
+    name: user?.name ?? '',
+    email: user?.email ?? '',
+    roles: user?.roles ?? ['cashier'],
+  });
+  function toggleRole(r: string) {
+    setForm((f) => ({ ...f, roles: f.roles.includes(r) ? f.roles.filter((x) => x !== r) : [...f.roles, r] }));
+  }
+  return (
+    <ActionForm submitLabel={user ? 'Save' : 'Add user'} onDone={onDone}
+      onSubmit={async () => {
+        if (user) {
+          await api(`/admin/tenants/${tenantId}/users/${user.id}`, {
+            method: 'PATCH',
+            body: { roles: form.roles, name: form.name || undefined, email: form.email || undefined },
+          });
+        } else {
+          await api(`/admin/tenants/${tenantId}/users`, {
+            method: 'POST',
+            body: { mobile: form.mobile, name: form.name || undefined, email: form.email || undefined, roles: form.roles },
+          });
+        }
+      }}>
+      {!user && (
+        <label className="field"><span>Mobile (10-digit) *</span>
+          <input value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value.replace(/\D/g, '') })} inputMode="numeric" maxLength={10} placeholder="9876543210" required />
+        </label>
+      )}
+      <label className="field"><span>Name</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+      <label className="field"><span>Email</span><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+      <div className="field">
+        <span>Roles</span>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
+          {MANDIR_ROLES.map((r) => (
+            <label key={r} style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 'normal' }}>
+              <input type="checkbox" checked={form.roles.includes(r)} onChange={() => toggleRole(r)} /> {r}
+            </label>
+          ))}
+        </div>
+      </div>
+    </ActionForm>
   );
 }
 

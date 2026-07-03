@@ -193,8 +193,10 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
           </select>
         </label>
         <label className="field"><span>City</span>
-          <input name="city" list="city-options" value={form.city} onChange={set('city')} placeholder={form.state ? 'Select or type…' : 'Pick a state first'} />
-          <datalist id="city-options">{cities.map((c) => <option key={c} value={c} />)}</datalist>
+          <select name="city" value={form.city} autoComplete="off" disabled={!form.state} onChange={set('city')}>
+            <option value="">{form.state ? 'Select city…' : 'Pick a state first'}</option>
+            {(form.city && !cities.includes(form.city) ? [form.city, ...cities] : cities).map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
         </label>
         <label className="field"><span>Pincode</span><input name="pincode" value={form.pincode} onChange={set('pincode')} inputMode="numeric" maxLength={6} placeholder="411001" /></label>
 
