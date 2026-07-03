@@ -63,6 +63,10 @@ export function LocationPicker({
   function setPin(la: number, ln: number) { placeMarker(la, ln); onChangeRef.current(round(la), round(ln)); }
 
   function useMyLocation() {
+    if (!window.isSecureContext) {
+      setGeoErr('Live location needs a secure (HTTPS) connection. Tap the map or drag the pin to set the location instead.');
+      return;
+    }
     if (!navigator.geolocation) { setGeoErr('Geolocation not supported'); return; }
     setLocating(true); setGeoErr('');
     navigator.geolocation.getCurrentPosition(
