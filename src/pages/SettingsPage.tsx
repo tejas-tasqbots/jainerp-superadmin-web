@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, publicApi, loadSession, type ApiMeta } from '../api/client';
+import { PhoneInput } from '../components/PhoneInput';
 import type { AdminUser, AuditEvent } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
 import { RecoveryCodes } from '../components/recovery';
 
-/** Display an E.164 (+91…) mobile as bare 10 digits for India-only UX. */
-const display10 = (m: string | null | undefined) => (m ?? '').replace(/^\+91/, '');
+/** Mobiles are stored/shown as full E.164 (+91…, +971…, …). */
+const display10 = (m: string | null | undefined) => m ?? '';
 
 type Tab = 'users' | 'audit' | 'account';
 
@@ -132,8 +133,7 @@ function CreateUserForm({ onCreated }: { onCreated: (token: string) => void }) {
       <label className="field"><span>Name</span><input name="user_name" value={form.name} onChange={set('name')} required /></label>
       <label className="field"><span>Email</span><input name="user_email" type="email" value={form.email} onChange={set('email')} required /></label>
       <label className="field"><span>Mobile</span>
-        <input name="user_mobile" value={form.mobile} onChange={setMobile} inputMode="numeric"
-          placeholder="10-digit mobile" pattern="\d{10}" maxLength={10} required />
+        <PhoneInput value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required />
       </label>
       <label className="field"><span>Role</span>
         <select name="user_role" value={form.role} onChange={set('role')}>
@@ -253,7 +253,7 @@ function ProfileCard({ onSaved }: { onSaved: () => void }) {
         setForm({
           name: r.data.name ?? '',
           email: r.data.email ?? '',
-          mobile: (r.data.mobile || '').replace(/^\+91/, ''),
+          mobile: r.data.mobile || '',
         });
         setLoaded(true);
       })
@@ -274,8 +274,7 @@ function ProfileCard({ onSaved }: { onSaved: () => void }) {
         <label className="field"><span>Name</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
         <label className="field"><span>Email</span><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
         <label className="field"><span>Mobile</span>
-          <input value={form.mobile} inputMode="numeric" placeholder="10-digit mobile" pattern="\d{10}" maxLength={10}
-            onChange={(e) => setForm({ ...form, mobile: e.target.value.replace(/\D/g, '').slice(0, 10) })} required />
+          <PhoneInput value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required />
         </label>
       </ActionForm>
     </div>

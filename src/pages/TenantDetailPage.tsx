@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, formatDate, formatPaise } from '../api/client';
+import { PhoneInput } from '../components/PhoneInput';
 import type { Invoice, License, TenantDetail } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal } from '../components/ui';
 
@@ -401,7 +402,7 @@ function UsersTab({ tenant, onNotice }: { tenant: TenantDetail; onNotice: (msg: 
 
 function MandirUserForm({ tenantId, user, onDone }: { tenantId: string; user?: MandirUser; onDone: () => void }) {
   const [form, setForm] = useState({
-    mobile: user?.mobile?.replace('+91', '') ?? '',
+    mobile: user?.mobile ?? '',
     name: user?.name ?? '',
     email: user?.email ?? '',
     roles: user?.roles ?? ['cashier'],
@@ -425,8 +426,8 @@ function MandirUserForm({ tenantId, user, onDone }: { tenantId: string; user?: M
         }
       }}>
       {!user && (
-        <label className="field"><span>Mobile (10-digit) *</span>
-          <input value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value.replace(/\D/g, '') })} inputMode="numeric" maxLength={10} placeholder="9876543210" required />
+        <label className="field"><span>Mobile *</span>
+          <PhoneInput value={form.mobile} onChange={(v) => setForm({ ...form, mobile: v })} required />
         </label>
       )}
       <label className="field"><span>Name</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>

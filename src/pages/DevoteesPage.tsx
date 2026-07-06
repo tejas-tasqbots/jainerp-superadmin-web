@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, type ApiMeta } from '../api/client';
+import { PhoneInput } from '../components/PhoneInput';
+import { CitySelect, StateSelect } from '../components/GeoSelect';
 import type { Devotee } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
 
@@ -120,12 +122,12 @@ function DevoteeForm({ devotee, onDone }: { devotee?: Devotee; onDone: () => voi
         }
       }}>
       {!devotee && (
-        <label className="field"><span>Mobile (+91…)</span><input name="mobile" value={form.mobile} onChange={set('mobile')} required /></label>
+        <label className="field"><span>Mobile</span><PhoneInput value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required /></label>
       )}
       <label className="field"><span>Name</span><input name="name" value={form.name} onChange={set('name')} /></label>
       <label className="field"><span>Email</span><input value={form.email} onChange={set('email')} /></label>
-      <label className="field"><span>City</span><input value={form.city} onChange={set('city')} /></label>
-      <label className="field"><span>State</span><input value={form.state} onChange={set('state')} /></label>
+      <label className="field"><span>State</span><StateSelect value={form.state} onChange={(sv) => setForm((f) => ({ ...f, state: sv, city: '' }))} /></label>
+      <label className="field"><span>City</span><CitySelect state={form.state} value={form.city} onChange={(c) => setForm((f) => ({ ...f, city: c }))} /></label>
     </ActionForm>
   );
 }
