@@ -101,19 +101,28 @@ export function PhoneInput({
 
   return (
     <div style={{ display: 'flex', gap: 6 }}>
-      <select
-        aria-label="Country code"
-        className={selectClassName}
-        value={parsed.dial}
-        disabled={disabled}
-        onChange={e => update(e.target.value, parsed.national)}
-      >
-        {[...byDial.entries()].map(([dial, group]) => (
-          <option key={dial} value={dial}>
-            {flag(group[0].iso2)} +{dial} {group.map(g => g.name).join(' / ')}
-          </option>
-        ))}
-      </select>
+      {/* The open list shows flag + code + country name; the closed control
+          shows only the dial code (long labels overflow the narrow select),
+          via a transparent native select overlaid on a compact display. */}
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <span aria-hidden="true" className={selectClassName} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#f8fafc', minWidth: 64, justifyContent: 'center' }}>
+          +{parsed.dial}
+          <span className="ml-1 text-xs opacity-60">▾</span>
+        </span>
+        <select
+          aria-label="Country code"
+          style={{ position: 'absolute', inset: 0, height: '100%', width: '100%', opacity: 0, cursor: 'pointer' }}
+          value={parsed.dial}
+          disabled={disabled}
+          onChange={e => update(e.target.value, parsed.national)}
+        >
+          {[...byDial.entries()].map(([dial, group]) => (
+            <option key={dial} value={dial}>
+              {flag(group[0].iso2)} +{dial} {group.map(g => g.name).join(' / ')}
+            </option>
+          ))}
+        </select>
+      </div>
       <input
         type="tel"
         inputMode="numeric"
