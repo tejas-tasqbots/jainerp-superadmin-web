@@ -54,6 +54,7 @@ jobs:
             "$EC2_USER@$EC2_HOST" \
             "cd /opt/jainerp && \
              echo $GHCR_PAT | docker login ghcr.io -u $GHCR_USER --password-stdin && \
+             docker system prune -f && \
              docker compose -f docker-compose.aws.yml --env-file .env.aws pull superadmin-web && \
              docker compose -f docker-compose.aws.yml --env-file .env.aws up -d superadmin-web"
           rm -f /tmp/deploy_key
