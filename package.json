@@ -1,7 +1,7 @@
 {
   "name": "@jainerp/superadmin-web",
   "version": "0.1.0",
-  "description": "JainERP Super Admin Console frontend (superadmin-tmis.tasqbots.com)",
+  "description": "JainERP™ Super Admin Console frontend (superadmin-tmis.tasqbots.com)",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,4 +1,4 @@
-# JainERP Super Admin Web Console
+# JainERP™ Super Admin Web Console
 
 Frontend for `superadmin-tmis.tasqbots.com`. React 18 + Vite + TypeScript, no UI
 framework — hand-rolled admin styling. Talks to **apps/superadmin-api** through the

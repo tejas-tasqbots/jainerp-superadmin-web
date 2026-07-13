@@ -5,7 +5,7 @@
 
 export function downloadRecoveryCodes(codes: string[], accountLabel?: string) {
   const header = [
-    'JainERP Super Admin — Two-factor recovery codes',
+    'JainERP™ Super Admin — Two-factor recovery codes',
     accountLabel ? `Account: ${accountLabel}` : null,
     `Generated: ${new Date().toLocaleString('en-IN')}`,
     '',
