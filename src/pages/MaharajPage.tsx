@@ -92,11 +92,27 @@ export function MaharajPage() {
   );
 }
 
-const TYPES = ['maharaj', 'mataji'];
+// Canonical ascetic ranks, mirroring maharaj-api/src/profiles/ascetic.ts.
+// The stored value is the rank; the label is how it is addressed — "Maharaj Ji"
+// and "Mataji" are honorifics, not types, and conflating them loses the
+// distinction between a Muni and an Ailak.
+const TYPES: { value: string; label: string }[] = [
+  { value: 'muni', label: 'Maharaj Ji (Muni)' },
+  { value: 'aryika', label: 'Mataji (Aryika)' },
+  { value: 'kshullak', label: 'Kshullak Ji' },
+  { value: 'kshullika', label: 'Kshullika Ji' },
+  { value: 'ailak', label: 'Ailak Ji' },
+];
+
+const SECTS: { value: string; label: string }[] = [
+  { value: '', label: '—' },
+  { value: 'digambar', label: 'Digambar' },
+  { value: 'shwetambar', label: 'Shwetambar' },
+];
 
 function MaharajCreateForm({ onDone }: { onDone: () => void }) {
   const [form, setForm] = useState({
-    name: '', type: 'maharaj', samuday: '', state: '', city: '',
+    name: '', type: 'muni', samuday: '', state: '', city: '',
     diksha_year: '', guru_name: '', bio: '', rep_mobile: '', verified: false,
   });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -118,7 +134,7 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
       }}>
       <label className="field"><span>Name *</span><input value={form.name} onChange={set('name')} required /></label>
       <label className="field"><span>Type</span>
-        <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+        <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
       </label>
       <label className="field"><span>Samuday / Sect</span><input value={form.samuday} onChange={set('samuday')} placeholder="e.g. Tapagachha" /></label>
       <label className="field"><span>State</span>
@@ -208,7 +224,7 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
         }}>
         <label className="field"><span>Name *</span><input value={form.name} onChange={set('name')} required /></label>
         <label className="field"><span>Type</span>
-          <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+          <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
         </label>
         <label className="field"><span>Samuday / Sect</span><input value={form.samuday} onChange={set('samuday')} /></label>
         <label className="field"><span>State</span>
