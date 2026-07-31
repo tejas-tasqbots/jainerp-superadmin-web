@@ -1,10 +1,11 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Landmark, Users, Sparkles, Package, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { LayoutDashboard, Landmark, Users, Sparkles, Package, Settings as SettingsIcon, ShieldCheck, LogOut } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
 import { LoginPage } from './pages/LoginPage';
 import { MaharajPage } from './pages/MaharajPage';
+import { ChangeRequestsPage } from './pages/ChangeRequestsPage';
 import { PlansPage } from './pages/PlansPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/mandirs', label: 'Manage Mandir', icon: <Landmark size={18} /> },
   { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
   { to: '/maharaj', label: 'Maharaj / Mataji', icon: <Sparkles size={18} /> },
+  { to: '/change-requests', label: 'Change Requests', icon: <ShieldCheck size={18} /> },
   { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
   { to: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
 ];
@@ -61,6 +63,7 @@ function Layout() {
           <Route path="/mandirs/:id" element={<TenantDetailPage />} />
           <Route path="/devotees" element={<DevoteesPage />} />
           <Route path="/maharaj" element={<MaharajPage />} />
+          <Route path="/change-requests" element={<ChangeRequestsPage />} />
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

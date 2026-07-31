@@ -62,6 +62,9 @@ export interface TenantDetail {
   tenancy_tier: string;
   db_cluster_ref: string;
   global_sync_enabled: boolean;
+  /** Set once the platform has verified bank/80G/PAN; while set the mandir
+      cannot edit those fields directly (migration 028). */
+  sensitive_verified_at: string | null;
   custom_domain: string | null;
   profile: {
     address: Record<string, string>;

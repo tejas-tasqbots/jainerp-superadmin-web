@@ -103,6 +103,24 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
               Reactivate
             </button>
           )}
+          {/* Verifying locks the mandir's bank/80G/PAN details: after this they
+              can only change via a reviewed request (migration 028). */}
+          <button
+            className="btn"
+            onClick={() =>
+              action(
+                () => api(`/admin/tenants/${tenant.id}/verify-sensitive`, {
+                  method: 'PATCH',
+                  body: { verified: !tenant.sensitive_verified_at },
+                }),
+                tenant.sensitive_verified_at
+                  ? 'Bank & tax details unlocked — the mandir can edit them again'
+                  : 'Bank & tax details verified and locked',
+              )
+            }
+          >
+            {tenant.sensitive_verified_at ? 'Unlock bank & tax details' : 'Verify bank & tax details'}
+          </button>
           <button className="btn" onClick={() => setModal('plan')}>Change plan</button>
           <button className="btn" onClick={() => setModal('tier')}>Change tenancy tier</button>
           <button
