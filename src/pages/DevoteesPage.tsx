@@ -122,7 +122,7 @@ function DevoteeForm({ devotee, onDone }: { devotee?: Devotee; onDone: () => voi
         }
       }}>
       {!devotee && (
-        <label className="field"><span>Mobile</span><PhoneInput value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required /></label>
+        <label className="field"><span>Mobile</span><PhoneInput name="mobile" value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required /></label>
       )}
       <label className="field"><span>Name</span><input name="name" value={form.name} onChange={set('name')} /></label>
       <label className="field"><span>Email</span><input value={form.email} onChange={set('email')} /></label>

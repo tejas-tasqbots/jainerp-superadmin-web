@@ -33,6 +33,23 @@ export function DashboardPage() {
                 {stats.temples.provisioning} provisioning
               </div>
             </div>
+            {/* Visibility / access breakdown — how many temples can actually
+                be used today, and how many devotees can see (migration 029). */}
+            <div className="stat">
+              <div className="label">Login access</div>
+              <div className="value" data-testid="stat-usable">{stats.temples.usable ?? stats.temples.active}</div>
+              <div className="sub">
+                {stats.temples.suspended ?? 0} suspended · {stats.temples.deactivated ?? 0} deactivated ·{' '}
+                {stats.temples.deleted ?? 0} deleted
+              </div>
+            </div>
+            <div className="stat">
+              <div className="label">Visible to devotees</div>
+              <div className="value" data-testid="stat-devotee-visible">{stats.temples.devotee_visible ?? 0}</div>
+              <div className="sub">
+                {stats.temples.devotee_hidden ?? 0} hidden · {stats.temples.custom_plan ?? 0} on custom plans
+              </div>
+            </div>
             <div className="stat">
               <div className="label">MRR / ARR</div>
               <div className="value">{formatPaise(stats.subscriptions.mrr_paise)}</div>

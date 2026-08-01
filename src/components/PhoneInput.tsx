@@ -63,6 +63,8 @@ export function isValidPhone(e164: string): boolean {
 interface PhoneInputProps {
   value: string
   onChange: (e164: string) => void
+  /** Forwarded to the number input so forms and E2E selectors can target it. */
+  name?: string
   required?: boolean
   disabled?: boolean
   autoFocus?: boolean
@@ -72,7 +74,7 @@ interface PhoneInputProps {
 }
 
 export function PhoneInput({
-  value, onChange, required, disabled, autoFocus, placeholder,
+  value, onChange, name, required, disabled, autoFocus, placeholder,
   selectClassName = '',
   inputClassName = '',
 }: PhoneInputProps) {
@@ -125,6 +127,7 @@ export function PhoneInput({
       </div>
       <input
         type="tel"
+        name={name}
         inputMode="numeric"
         className={inputClassName}
         placeholder={placeholder ?? (parsed.dial === '91' ? '9876543210' : 'Phone number')}

@@ -228,6 +228,12 @@ async function main() {
   const maharajList = await http('GET', '/admin/maharaj', { token });
   record('SA-MHJ-01', 'P1', 'maharaj list', maharajList.status === 200, `status=${maharajList.status}`);
 
+  // ================================================================
+  // VISIBILITY / LIFECYCLE / CUSTOM PLAN / BILLING HISTORY (migration 029)
+  // Runs against a throwaway tenant so no real mandir is ever suspended.
+  // ================================================================
+  await visibilityAndBillingSuite(token);
+
   // ---------------- SUMMARY ----------------
   const passed = results.filter((r) => r.ok).length;
   const failed = results.filter((r) => !r.ok);
@@ -236,6 +242,400 @@ async function main() {
   if (failed.length) console.log('FAILURES:', failed.map((r) => r.id).join(', '));
   console.log('\nJSON_RESULTS=' + JSON.stringify(results));
   process.exit(p1Failed.length ? 1 : 0);
+}
+
+/**
+ * Temple visibility on/off, active/inactive, suspend, soft delete + restore,
+ * custom plans, and the subscription / upgrade / receipt-download history
+ * (migration 029).
+ *
+ * Everything runs against a purpose-built throwaway mandir so no real tenant is
+ * ever blocked. Cross-app assertions (mandiradmin login refusal, devotee
+ * directory hiding) run only when those APIs are reachable, and use their
+ * OTP_MOCK login bypass.
+ */
+async function visibilityAndBillingSuite(token) {
+  const MANDIR_API = process.env.E2E_MANDIR_API ?? 'http://localhost:3106/api/v1';
+  const DEVOTEE_API = process.env.E2E_DEVOTEE_API ?? 'http://localhost:3107/api/v1';
+  const run = Date.now().toString().slice(-6);
+  const staffMobile = `+9198${run}77`.slice(0, 13);
+  const devoteeMobile = `+9197${run}88`.slice(0, 13);
+  // The devotee directory sits behind DevoteeAuthGuard — sign a throwaway
+  // devotee in through the OTP_MOCK bypass so the visibility checks are real.
+  const devoteeToken = await devoteeLogin(DEVOTEE_API, devoteeMobile);
+
+  // ---- provision a disposable mandir ----
+  const created = await http('POST', '/admin/tenants', {
+    token,
+    body: {
+      name: `VIS QA Mandir ${run}`,
+      plan: 'standard',
+      billing_cycle: 'monthly',
+      admin_contact: { name: 'Vis QA Admin', mobile: staffMobile },
+      address: { city: 'Pune', state: 'Maharashtra' },
+      devotee_visible: true,
+    },
+  });
+  const id = created.data?.id;
+  const slug = created.data?.slug;
+  record('SA-VIS-00', 'P1', 'throwaway mandir provisioned for the visibility suite',
+    (created.status === 200 || created.status === 201) && !!id, `status=${created.status} slug=${slug}`);
+  if (!id) return;
+
+  const detail = async () => (await http('GET', `/admin/tenants/${id}`, { token })).data;
+  const access = async () => (await http('GET', `/admin/tenants/${id}/access`, { token })).data;
+
+  // ---- baseline ----
+  const base = await detail();
+  record('SA-VIS-01', 'P1', 'new mandir starts visible, active, not deleted, access allowed',
+    base?.devotee_visible === true && base?.is_active === true && base?.is_deleted === false && base?.access_enabled === true,
+    `visible=${base?.devotee_visible} active=${base?.is_active} access=${base?.access_enabled}`);
+
+  // ---- 1. devotee visibility OFF (must NOT touch login access) ----
+  const hide = await http('PATCH', `/admin/tenants/${id}/visibility`, { token, body: { devotee_visible: false } });
+  const afterHide = await access();
+  record('SA-VIS-02', 'P1', 'visibility off hides from devotees but keeps staff login working',
+    hide.status === 200 && afterHide?.devotee_visible === false && afterHide?.access_enabled === true
+      && afterHide?.listed_in_directory === false,
+    `access=${afterHide?.access_enabled} listed=${afterHide?.listed_in_directory}`);
+
+  const hideAgain = await http('PATCH', `/admin/tenants/${id}/visibility`, { token, body: { devotee_visible: false } });
+  record('SA-VIS-03', 'P2', 'toggling visibility to its current value -> 409',
+    hideAgain.status === 409, `status=${hideAgain.status}`);
+
+  const filterHidden = await http('GET', '/admin/tenants?devotee_visible=false&limit=100', { token });
+  record('SA-VIS-04', 'P2', 'list filter devotee_visible=false finds the hidden mandir',
+    filterHidden.status === 200 && (filterHidden.data ?? []).some((t) => t.id === id),
+    `n=${(filterHidden.data ?? []).length}`);
+
+  // devotee-api must not list or serve it
+  if (devoteeToken) {
+    const dirHidden = await devoteeGet(DEVOTEE_API, devoteeToken, `/temples/directory?q=${encodeURIComponent(`VIS QA Mandir ${run}`)}`);
+    record('SA-VIS-05', 'P1', 'devotee directory does not list a hidden mandir',
+      dirHidden.status === 200 && !(dirHidden.rows ?? []).some((t) => t.slug === slug),
+      `n=${(dirHidden.rows ?? []).length}`);
+    const bySlug = await devoteeGet(DEVOTEE_API, devoteeToken, `/temples/${slug}`);
+    record('SA-VIS-06', 'P1', 'devotee temple page 404s for a hidden mandir',
+      bySlug.status === 404, `status=${bySlug.status}`);
+    const pay = await devoteeGet(DEVOTEE_API, devoteeToken, `/temples/${slug}/payment-details`);
+    record('SA-VIS-06b', 'P1', 'donating to a hidden mandir is refused',
+      pay.status === 404, `status=${pay.status}`);
+  } else {
+    record('SA-VIS-05', 'P3', 'devotee directory checks skipped (devotee-api not reachable)', true);
+  }
+
+  // ---- back ON, then confirm devotees can see it again ----
+  await http('PATCH', `/admin/tenants/${id}/visibility`, { token, body: { devotee_visible: true } });
+  if (devoteeToken) {
+    const dirShown = await devoteeGet(DEVOTEE_API, devoteeToken, `/temples/directory?q=${encodeURIComponent(`VIS QA Mandir ${run}`)}`);
+    record('SA-VIS-07', 'P1', 'devotee directory lists the mandir again once visibility is back on',
+      (dirShown.rows ?? []).some((t) => t.slug === slug), `n=${(dirShown.rows ?? []).length}`);
+  }
+
+  // ---- 2. deactivate (master switch) blocks staff login ----
+  const deact = await http('PATCH', `/admin/tenants/${id}/activation`, {
+    token,
+    body: { is_active: false, reason: 'non_payment' },
+  });
+  const afterDeact = await access();
+  record('SA-VIS-08', 'P1', 'deactivation blocks access and produces a contact message',
+    deact.status === 200 && afterDeact?.access_enabled === false && afterDeact?.is_active === false
+      && /contact@jainerp\.org/i.test(afterDeact?.block_message ?? ''),
+    `msg="${(afterDeact?.block_message ?? '').slice(0, 70)}"`);
+
+  // The mandir staff login must now refuse with that same message.
+  const mandirBlocked = await mandirLoginAttempt(MANDIR_API, staffMobile);
+  if (mandirBlocked) {
+    record('SA-VIS-09', 'P1', 'mandir staff login refused with the contact message',
+      mandirBlocked.blocked === true && /contact@jainerp\.org/i.test(mandirBlocked.message ?? ''),
+      `code=${mandirBlocked.code} msg="${(mandirBlocked.message ?? '').slice(0, 70)}"`);
+  } else {
+    record('SA-VIS-09', 'P3', 'mandir login check skipped (mandiradmin-api not reachable)', true);
+  }
+
+  if (devoteeToken) {
+    const dirDeact = await devoteeGet(DEVOTEE_API, devoteeToken, `/temples/directory?q=${encodeURIComponent(`VIS QA Mandir ${run}`)}`);
+    record('SA-VIS-09b', 'P1', 'a deactivated mandir also disappears from the devotee directory',
+      !(dirDeact.rows ?? []).some((t) => t.slug === slug), `n=${(dirDeact.rows ?? []).length}`);
+  }
+
+  // ---- 3. custom block message overrides the default ----
+  await http('PATCH', `/admin/tenants/${id}/activation`, { token, body: { is_active: true } });
+  await http('PATCH', `/admin/tenants/${id}/activation`, {
+    token,
+    body: { is_active: false, reason: 'other', block_message: 'Renewal pending — call Sureshbhai on 9764564185.' },
+  });
+  const custom = await access();
+  record('SA-VIS-10', 'P2', 'custom block message is what staff are shown',
+    custom?.block_message === 'Renewal pending — call Sureshbhai on 9764564185.',
+    `msg="${custom?.block_message}"`);
+
+  // ---- 4. reactivate restores access ----
+  const react = await http('PATCH', `/admin/tenants/${id}/activation`, { token, body: { is_active: true } });
+  const afterReact = await access();
+  record('SA-VIS-11', 'P1', 'activation restores access and clears the block message',
+    react.status === 200 && afterReact?.access_enabled === true && afterReact?.block_message === null,
+    `access=${afterReact?.access_enabled}`);
+
+  // ---- 5. suspend is an independent control ----
+  const susp = await http('PATCH', `/admin/tenants/${id}/suspend`, { token, body: { reason: 'non_payment' } });
+  const afterSusp = await access();
+  record('SA-VIS-12', 'P1', 'suspend blocks access even though is_active is still true',
+    susp.status === 200 && afterSusp?.access_enabled === false && afterSusp?.is_active === true
+      && afterSusp?.status === 'suspended',
+    `status=${afterSusp?.status} is_active=${afterSusp?.is_active}`);
+  await http('PATCH', `/admin/tenants/${id}/reactivate`, { token, body: {} });
+
+  // ---- 6. soft delete + restore ----
+  const badDelete = await http('DELETE', `/admin/tenants/${id}`, { token, body: { confirm_slug: 'wrong-slug' } });
+  record('SA-VIS-13', 'P1', 'delete without the matching slug -> 400',
+    badDelete.status === 400, `status=${badDelete.status}`);
+
+  const del = await http('DELETE', `/admin/tenants/${id}`, { token, body: { confirm_slug: slug, reason: 'qa cleanup' } });
+  const afterDel = await access();
+  record('SA-VIS-14', 'P1', 'soft delete blocks access and flags the mandir deleted',
+    del.status === 200 && afterDel?.is_deleted === true && afterDel?.access_enabled === false,
+    `deleted=${afterDel?.is_deleted}`);
+
+  const defaultList = await http('GET', '/admin/tenants?limit=100', { token });
+  record('SA-VIS-15', 'P1', 'a deleted mandir drops out of the default tenant list',
+    !(defaultList.data ?? []).some((t) => t.id === id), `n=${(defaultList.data ?? []).length}`);
+
+  const binList = await http('GET', '/admin/tenants?deleted_only=true&limit=100', { token });
+  record('SA-VIS-16', 'P2', 'deleted_only=true surfaces it in the recycle bin',
+    (binList.data ?? []).some((t) => t.id === id), `n=${(binList.data ?? []).length}`);
+
+  const suspendDeleted = await http('PATCH', `/admin/tenants/${id}/suspend`, { token, body: { reason: 'abuse' } });
+  record('SA-VIS-17', 'P2', 'a deleted mandir cannot be suspended -> 409',
+    suspendDeleted.status === 409, `status=${suspendDeleted.status}`);
+
+  const restore = await http('PATCH', `/admin/tenants/${id}/restore`, { token, body: {} });
+  const afterRestore = await access();
+  record('SA-VIS-18', 'P1', 'restore brings the mandir back with access enabled',
+    restore.status === 200 && afterRestore?.is_deleted === false && afterRestore?.access_enabled === true,
+    `access=${afterRestore?.access_enabled}`);
+
+  const restoreAgain = await http('PATCH', `/admin/tenants/${id}/restore`, { token, body: {} });
+  record('SA-VIS-19', 'P2', 'restoring a live mandir -> 409',
+    restoreAgain.status === 409, `status=${restoreAgain.status}`);
+
+  // ---- 7. lifecycle audit trail ----
+  const lifecycle = await http('GET', `/admin/tenants/${id}/lifecycle-history`, { token });
+  const actions = (lifecycle.data ?? []).map((e) => e.action);
+  record('SA-VIS-20', 'P1', 'lifecycle history records every visibility/access action',
+    lifecycle.status === 200
+      && actions.includes('tenant.devotee_visible.off')
+      && actions.includes('tenant.deactivate')
+      && actions.includes('tenant.soft_delete')
+      && actions.includes('tenant.restore'),
+    `n=${actions.length}`);
+
+  // ================= CUSTOM PLAN =================
+  const planBefore = await http('GET', `/admin/tenants/${id}/effective-plan`, { token });
+  record('SA-CP-01', 'P1', 'effective plan with no override matches the assigned plan',
+    planBefore.status === 200 && planBefore.data?.is_custom === false && planBefore.data?.plan === 'standard',
+    `plan=${planBefore.data?.plan} custom=${planBefore.data?.is_custom}`);
+
+  const emptyOverride = await http('PUT', `/admin/tenants/${id}/custom-plan`, { token, body: {} });
+  record('SA-CP-02', 'P1', 'custom plan with no fields -> 400',
+    emptyOverride.status === 400, `status=${emptyOverride.status}`);
+
+  const setCustom = await http('PUT', `/admin/tenants/${id}/custom-plan`, {
+    token,
+    body: {
+      label: 'Trust Special',
+      price_yearly_paise: 1234500,
+      max_users: 42,
+      note: 'Negotiated at the trustee meeting',
+    },
+  });
+  const eff = setCustom.data?.effective_plan;
+  record('SA-CP-03', 'P1', 'custom plan overrides only the fields sent',
+    setCustom.status === 200 && eff?.is_custom === true && eff?.price_yearly_paise === 1234500
+      && eff?.max_users === 42 && eff?.display_name === 'Trust Special'
+      // untouched fields still fall through to the assigned plan
+      && eff?.max_receipts_per_month === planBefore.data?.max_receipts_per_month,
+    `overrides=${(eff?.overridden_fields ?? []).join(',')}`);
+
+  const customList = await http('GET', '/admin/tenants?custom_plan_only=true&limit=100', { token });
+  record('SA-CP-04', 'P2', 'custom_plan_only filter finds it',
+    (customList.data ?? []).some((t) => t.id === id), `n=${(customList.data ?? []).length}`);
+
+  const customInHistory = await http('GET', `/admin/tenants/${id}/plan-changes`, { token });
+  record('SA-CP-05', 'P1', 'a custom-plan edit lands in the plan-change history',
+    (customInHistory.data ?? []).some((c) => c.changeType === 'custom_plan' || c.change_type === 'custom_plan'),
+    `n=${(customInHistory.data ?? []).length}`);
+
+  const clear = await http('DELETE', `/admin/tenants/${id}/custom-plan`, { token });
+  record('SA-CP-06', 'P1', 'clearing the override returns the mandir to its plan price',
+    clear.status === 200 && clear.data?.effective_plan?.is_custom === false
+      && clear.data?.effective_plan?.price_yearly_paise === planBefore.data?.price_yearly_paise,
+    `price=${clear.data?.effective_plan?.price_yearly_paise}`);
+
+  const clearAgain = await http('DELETE', `/admin/tenants/${id}/custom-plan`, { token });
+  record('SA-CP-07', 'P2', 'clearing a non-existent override -> 404',
+    clearAgain.status === 404, `status=${clearAgain.status}`);
+
+  // ================= PLANS MASTER =================
+  const planKey = `qa_plan_${run}`;
+  const newPlan = await http('POST', '/admin/plans', {
+    token,
+    body: { name: planKey, display_name: `QA Plan ${run}`, price_monthly_paise: 50000, max_users: 5 },
+  });
+  record('SA-PLN-01', 'P1', 'create a plan in the master',
+    (newPlan.status === 200 || newPlan.status === 201) && !!newPlan.data?.id, `status=${newPlan.status}`);
+  const planId = newPlan.data?.id;
+
+  const dupPlan = await http('POST', '/admin/plans', {
+    token, body: { name: planKey, display_name: 'dupe' },
+  });
+  record('SA-PLN-02', 'P1', 'duplicate plan key -> 409', dupPlan.status === 409, `status=${dupPlan.status}`);
+
+  const patchPlan = await http('PATCH', `/admin/plans/${planId}`, {
+    token, body: { display_name: `QA Plan ${run} v2`, max_users: 9 },
+  });
+  record('SA-PLN-03', 'P1', 'update a plan',
+    patchPlan.status === 200 && patchPlan.data?.maxUsers === 9, `max_users=${patchPlan.data?.maxUsers}`);
+
+  const planList = await http('GET', '/admin/plans', { token });
+  const stdPlan = (planList.data ?? []).find((p) => p.name === 'standard');
+  record('SA-PLN-04', 'P1', 'plan list carries live tenant counts',
+    planList.status === 200 && typeof stdPlan?.tenant_count === 'number' && stdPlan.tenant_count > 0,
+    `standard.tenant_count=${stdPlan?.tenant_count}`);
+
+  const inUse = await http('DELETE', `/admin/plans/${stdPlan?.id}`, { token });
+  record('SA-PLN-05', 'P1', 'a plan in use cannot be deleted -> 409 PLAN_IN_USE',
+    inUse.status === 409 && inUse.code === 'PLAN_IN_USE', `status=${inUse.status} code=${inUse.code}`);
+
+  const delPlan = await http('DELETE', `/admin/plans/${planId}`, { token });
+  record('SA-PLN-06', 'P1', 'an unused plan can be deleted (cleanup)',
+    delPlan.status === 200, `status=${delPlan.status}`);
+
+  // ================= BILLING / PURCHASE / RECEIPT HISTORY =================
+  const invoices = await http('GET', `/admin/tenants/${id}/invoices`, { token });
+  const invoice = (invoices.data ?? [])[0];
+  record('SA-HIS-01', 'P1', 'onboarding raised a first subscription invoice',
+    !!invoice, `n=${(invoices.data ?? []).length}`);
+
+  if (invoice) {
+    const paid = await http('POST', `/admin/invoices/${invoice.id}/mark-paid`, {
+      token, body: { payment_method: 'neft', payment_ref: 'UTR12345678', note: 'QA manual settlement' },
+    });
+    record('SA-HIS-02', 'P1', 'mark-paid records HOW the mandir paid',
+      paid.status === 200, `status=${paid.status}`);
+
+    const paidAgain = await http('POST', `/admin/invoices/${invoice.id}/mark-paid`, { token, body: {} });
+    record('SA-HIS-03', 'P2', 'marking an already-paid invoice -> 409',
+      paidAgain.status === 409, `status=${paidAgain.status}`);
+
+    const voidPaid = await http('POST', `/admin/invoices/${invoice.id}/void`, { token, body: { reason: 'nope' } });
+    record('SA-HIS-04', 'P1', 'a paid invoice cannot be voided -> 409',
+      voidPaid.status === 409, `status=${voidPaid.status}`);
+
+    // Receipt: HTML out, download recorded in.
+    const receipt = await fetch(`${BASE}/admin/invoices/${invoice.id}/receipt?channel=download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const html = await receipt.text();
+    record('SA-HIS-05', 'P1', 'receipt renders a GST tax invoice with the payment method',
+      receipt.status === 200 && html.includes('TAX INVOICE') && html.includes('NEFT') && html.includes('UTR12345678'),
+      `len=${html.length}`);
+
+    const downloads = await http('GET', `/admin/tenants/${id}/receipt-downloads`, { token });
+    record('SA-HIS-06', 'P1', 'opening the receipt is recorded in the download history',
+      (downloads.data ?? []).some((d) => d.invoice_id === invoice.id && d.actor_type === 'super_admin' && d.channel === 'download'),
+      `n=${(downloads.data ?? []).length}`);
+  }
+
+  const history = await http('GET', `/admin/tenants/${id}/billing-history`, { token });
+  const h = history.data;
+  record('SA-HIS-07', 'P1', 'billing history returns subscriptions + upgrades + invoices + downloads + totals',
+    history.status === 200 && Array.isArray(h?.subscriptions) && Array.isArray(h?.plan_changes)
+      && Array.isArray(h?.invoices) && Array.isArray(h?.receipt_downloads) && !!h?.totals,
+    `subs=${h?.subscriptions?.length} inv=${h?.invoices?.length} dl=${h?.receipt_downloads?.length}`);
+
+  record('SA-HIS-08', 'P1', 'lifetime totals reflect the settled invoice',
+    (h?.totals?.paid_count ?? 0) >= 1 && (h?.totals?.paid_paise ?? 0) > 0,
+    `paid=${h?.totals?.paid_paise} count=${h?.totals?.paid_count}`);
+
+  record('SA-HIS-09', 'P1', 'each invoice carries its plan snapshot + download counters',
+    (h?.invoices ?? []).every((i) => 'download_count' in i && 'payment_method' in i && 'plan_name' in i),
+    `first.plan=${h?.invoices?.[0]?.plan_name} dl=${h?.invoices?.[0]?.download_count}`);
+
+  // ---- upgrade → history entry ----
+  const upgrade = await http('PATCH', `/admin/tenants/${id}/plan`, {
+    token, body: { plan: 'premium', effective: 'immediate' },
+  });
+  const afterUpgrade = await http('GET', `/admin/tenants/${id}/billing-history`, { token });
+  record('SA-HIS-10', 'P1', 'a plan upgrade appears in the upgrade history with an invoice',
+    upgrade.status === 200
+      && (afterUpgrade.data?.plan_changes ?? []).some((c) => c.change_type === 'plan' && c.to_value === 'premium'),
+    `changes=${afterUpgrade.data?.plan_changes?.length}`);
+
+  // ---- cleanup: leave the estate tidy ----
+  await http('DELETE', `/admin/tenants/${id}`, { token, body: { confirm_slug: slug, reason: 'QA suite cleanup' } });
+}
+
+/** Devotee OTP_MOCK login → access token (null when devotee-api is down). */
+async function devoteeLogin(baseUrl, mobile) {
+  try {
+    const send = await fetch(`${baseUrl}/auth/send-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile }),
+    });
+    const otp = (await send.json())?.data?.dev_otp;
+    if (!otp) return null;
+    const verify = await fetch(`${baseUrl}/auth/verify-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile, otp, name: 'QA Visibility Devotee' }),
+    });
+    return (await verify.json())?.data?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** GET on devotee-api with the devotee bearer; unwraps { data: { rows } }. */
+async function devoteeGet(baseUrl, token, path) {
+  const res = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  const json = await res.json().catch(() => null);
+  const data = json?.data;
+  return { status: res.status, data, rows: Array.isArray(data) ? data : data?.rows ?? [] };
+}
+
+/**
+ * Drives the mandir portal's OTP login as far as it will go (OTP_MOCK returns
+ * the code, so no SMS is involved). Returns how the API refused, or null when
+ * mandiradmin-api is not running.
+ */
+async function mandirLoginAttempt(baseUrl, mobile) {
+  try {
+    const send = await fetch(`${baseUrl}/auth/send-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile, purpose: 'login' }),
+    });
+    const sendJson = await send.json();
+    const otp = sendJson?.data?.dev_otp;
+    if (!otp) return null; // OTP_MOCK off — cannot drive login without an SMS
+    const verify = await fetch(`${baseUrl}/auth/verify-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile, otp }),
+    });
+    const json = await verify.json();
+    if (verify.status === 403) {
+      return { blocked: true, code: json?.error?.code, message: json?.error?.message };
+    }
+    // Login got through — the selection step should still refuse a blocked mandir.
+    const choice = json?.data?.tenants?.[0];
+    if (choice?.blocked) return { blocked: true, code: 'TENANT_INACTIVE', message: choice.block_message };
+    return { blocked: false, code: null, message: null };
+  } catch {
+    return null;
+  }
 }
 
 main().catch((e) => { console.error('SUITE ERROR:', e); process.exit(2); });

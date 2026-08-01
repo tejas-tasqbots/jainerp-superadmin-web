@@ -110,6 +110,44 @@ export async function api<T>(
 /** Unauthenticated request (login steps). */
 export const publicApi = rawRequest;
 
+/**
+ * Authenticated GET for endpoints that stream HTML instead of the JSON
+ * envelope (subscription receipts). Kept out of `api()` so the token stays in
+ * the Authorization header — never in a URL that would land in access logs.
+ */
+export async function apiHtml(path: string): Promise<string> {
+  const fetchOnce = async (token?: string | null) => {
+    const res = await fetch(BASE + path, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new ApiRequestError(res.status, json?.error ?? { code: 'NETWORK', message: `HTTP ${res.status}` });
+    }
+    return res.text();
+  };
+  const session = loadSession();
+  try {
+    return await fetchOnce(session?.access_token);
+  } catch (e) {
+    if (e instanceof ApiRequestError && e.status === 401 && session) {
+      const token = await refreshAccessToken();
+      if (token) return fetchOnce(token);
+    }
+    throw e;
+  }
+}
+
+/** Fetch a receipt and hand it to a new tab for print / save-as-PDF. */
+export async function openReceipt(path: string): Promise<void> {
+  const html = await apiHtml(path);
+  const win = window.open('', '_blank');
+  if (!win) throw new ApiRequestError(0, { code: 'POPUP_BLOCKED', message: 'Allow pop-ups to open the receipt' });
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+
 export function formatPaise(paise: number | null | undefined): string {
   if (paise == null) return '—';
   return '₹' + (paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 });

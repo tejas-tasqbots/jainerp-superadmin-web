@@ -1,5 +1,18 @@
 export interface DashboardStats {
-  temples: { total: number; active: number; inactive: number; provisioning: number };
+  temples: {
+    total: number;
+    active: number;
+    inactive: number;
+    provisioning: number;
+    /** Visibility / lifecycle breakdown (migration 029). */
+    usable?: number;
+    suspended?: number;
+    deactivated?: number;
+    deleted?: number;
+    devotee_visible?: number;
+    devotee_hidden?: number;
+    custom_plan?: number;
+  };
   subscriptions: {
     mrr_paise: number;
     arr_paise: number;
@@ -27,11 +40,62 @@ export interface TenantRow {
   temple_type: string;
   status: string;
   plan: string;
+  plan_display?: string;
+  is_custom_plan?: boolean;
   tenancy_tier: string;
   global_sync_enabled: boolean;
+  /** Visibility / lifecycle controls (migration 029). */
+  devotee_visible: boolean;
+  is_active: boolean;
+  is_deleted: boolean;
+  deleted_at: string | null;
+  /** Generated gate: status=active AND is_active AND not soft-deleted. */
+  access_enabled: boolean;
+  access_block_reason: string | null;
   address: Record<string, string>;
   pending_amount_paise: number;
   created_at: string;
+}
+
+/** Assigned plan merged with any per-tenant override. */
+export interface EffectivePlan {
+  plan: string;
+  display_name: string;
+  is_custom: boolean;
+  overridden_fields: string[];
+  price_monthly_paise: number;
+  price_yearly_paise: number;
+  max_users: number;
+  max_devices: number;
+  max_receipts_per_month: number;
+  max_sms_per_month: number;
+  max_storage_mb: number;
+  features: Record<string, unknown>;
+}
+
+export interface CustomPlanOverride {
+  price_monthly_paise?: number;
+  price_yearly_paise?: number;
+  max_users?: number;
+  max_devices?: number;
+  max_receipts_per_month?: number;
+  max_sms_per_month?: number;
+  max_storage_mb?: number;
+  features?: Record<string, unknown>;
+}
+
+/** Everything that decides login access + devotee visibility for one temple. */
+export interface TenantAccessState {
+  id: string;
+  action?: string;
+  status: string;
+  is_active: boolean;
+  devotee_visible: boolean;
+  is_deleted: boolean;
+  access_enabled: boolean;
+  listed_in_directory: boolean;
+  access_block_reason: string | null;
+  block_message: string | null;
 }
 
 export interface Trustee {
@@ -66,6 +130,24 @@ export interface TenantDetail {
       cannot edit those fields directly (migration 028). */
   sensitive_verified_at: string | null;
   custom_domain: string | null;
+  /** Visibility / lifecycle controls (migration 029). */
+  devotee_visible: boolean;
+  is_active: boolean;
+  is_deleted: boolean;
+  deleted_at: string | null;
+  deactivated_at: string | null;
+  suspended_at: string | null;
+  access_enabled: boolean;
+  access_block_reason: string | null;
+  access_block_message: string | null;
+  /** Exactly what blocked staff see on the login screen. */
+  effective_block_message: string | null;
+  /** Assigned plan merged with any per-tenant override. */
+  effective_plan: EffectivePlan | null;
+  custom_plan: CustomPlanOverride | null;
+  custom_plan_label: string | null;
+  custom_plan_note: string | null;
+  custom_plan_set_at: string | null;
   profile: {
     address: Record<string, string>;
     contact: Record<string, string>;
@@ -159,4 +241,102 @@ export interface AuditEvent {
   payload: Record<string, unknown>;
   ip: string | null;
   createdAt: string;
+}
+
+// ---------- Subscription / purchase history (migration 029) ----------
+
+export interface HistorySubscription {
+  id: string;
+  status: string;
+  billing_cycle: string;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  plan: string;
+  plan_display: string;
+  pending_plan: string | null;
+  pending_billing_cycle: string | null;
+  pending_effective_at: string | null;
+  razorpay_subscription_id?: string | null;
+  failure_count?: number;
+}
+
+export interface PlanChangeRow {
+  id: string;
+  change_type: 'plan' | 'billing_cycle' | 'tenancy_tier' | 'custom_plan';
+  from_value: string;
+  to_value: string;
+  effective: string;
+  effective_at: string | null;
+  proration_credit_paise: number;
+  invoice_id: string | null;
+  invoice_number: string | null;
+  note: string | null;
+  changed_by_name: string | null;
+  changed_by_email: string | null;
+  created_at: string;
+}
+
+export interface HistoryInvoice {
+  id: string;
+  invoice_number: string;
+  period_start: string;
+  period_end: string;
+  subtotal_paise: number;
+  gst_rate: string;
+  gst_amount_paise: number;
+  total_paise: number;
+  status: string;
+  payment_method: string | null;
+  payment_ref: string | null;
+  razorpay_payment_id: string | null;
+  plan_name: string | null;
+  billing_cycle: string | null;
+  paid_at: string | null;
+  voided_at: string | null;
+  note: string | null;
+  created_at: string;
+  download_count: number;
+  last_downloaded_at: string | null;
+}
+
+export interface ReceiptDownload {
+  id: string;
+  invoice_id: string;
+  invoice_number: string;
+  total_paise: number;
+  invoice_status: string;
+  actor_type: 'temple' | 'super_admin' | 'system';
+  actor_name: string | null;
+  channel: string;
+  ip: string | null;
+  created_at: string;
+}
+
+export interface BillingHistory {
+  tenant: { id: string; slug: string; name: string; customer_since: string };
+  effective_plan: EffectivePlan | null;
+  subscriptions: HistorySubscription[];
+  plan_changes: PlanChangeRow[];
+  invoices: HistoryInvoice[];
+  receipt_downloads: ReceiptDownload[];
+  totals: {
+    paid_paise: number;
+    outstanding_paise: number;
+    voided_paise: number;
+    paid_count: number;
+    unpaid_count: number;
+    first_invoice_at: string | null;
+    last_paid_at: string | null;
+  };
+}
+
+export interface LifecycleEvent {
+  id: string;
+  action: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+  actor_name: string | null;
+  actor_email: string | null;
 }

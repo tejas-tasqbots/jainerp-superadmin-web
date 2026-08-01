@@ -133,7 +133,7 @@ function CreateUserForm({ onCreated }: { onCreated: (token: string) => void }) {
       <label className="field"><span>Name</span><input name="user_name" value={form.name} onChange={set('name')} required /></label>
       <label className="field"><span>Email</span><input name="user_email" type="email" value={form.email} onChange={set('email')} required /></label>
       <label className="field"><span>Mobile</span>
-        <PhoneInput value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required />
+        <PhoneInput name="user_mobile" value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required />
       </label>
       <label className="field"><span>Role</span>
         <select name="user_role" value={form.role} onChange={set('role')}>
@@ -274,7 +274,7 @@ function ProfileCard({ onSaved }: { onSaved: () => void }) {
         <label className="field"><span>Name</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
         <label className="field"><span>Email</span><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
         <label className="field"><span>Mobile</span>
-          <PhoneInput value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required />
+          <PhoneInput name="my_mobile" value={form.mobile} onChange={(v) => setForm((f) => ({ ...f, mobile: v }))} required />
         </label>
       </ActionForm>
     </div>

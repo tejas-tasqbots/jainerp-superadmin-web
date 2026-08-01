@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, formatPaise, type ApiMeta } from '../api/client';
 import type { TenantRow } from '../api/types';
@@ -14,21 +14,40 @@ export function TenantsPage() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [plan, setPlan] = useState('');
+  /** '' = live temples · visible/hidden = devotee directory · inactive · deleted */
+  const [access, setAccess] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [showCreate, setShowCreate] = useState(false);
+
+  /**
+   * Every filter change fires a fresh request while earlier ones may still be
+   * in flight. Without a sequence guard a slower *older* response can land last
+   * and overwrite the filtered rows — the table then shows live mandirs while
+   * the dropdown says "Deleted". Only the newest request is allowed to write.
+   */
+  const reqSeq = useRef(0);
 
   const load = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), limit: '25' });
     if (q) params.set('q', q);
     if (status) params.set('status', status);
     if (plan) params.set('plan', plan);
+    if (access === 'visible') params.set('devotee_visible', 'true');
+    if (access === 'hidden') params.set('devotee_visible', 'false');
+    if (access === 'inactive') params.set('is_active', 'false');
+    if (access === 'deleted') params.set('deleted_only', 'true');
+    if (access === 'custom_plan') params.set('custom_plan_only', 'true');
+    const seq = ++reqSeq.current;
     api<TenantRow[]>(`/admin/tenants?${params}`)
       .then((r) => {
+        if (seq !== reqSeq.current) return; // superseded
         setRows(r.data);
         setMeta(r.meta);
       })
-      .catch(setError);
-  }, [page, q, status, plan]);
+      .catch((e) => {
+        if (seq === reqSeq.current) setError(e);
+      });
+  }, [page, q, status, plan, access]);
 
   useEffect(load, [load]);
 
@@ -48,6 +67,19 @@ export function TenantsPage() {
           <option value="">All plans</option>
           {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
+        <select
+          name="access"
+          value={access}
+          onChange={(e) => { setAccess(e.target.value); setPage(1); }}
+          title="Visibility & access filters"
+        >
+          <option value="">Live mandirs</option>
+          <option value="visible">Visible to devotees</option>
+          <option value="hidden">Hidden from devotees</option>
+          <option value="inactive">Deactivated (cannot log in)</option>
+          <option value="deleted">Deleted (recycle bin)</option>
+          <option value="custom_plan">On a custom plan</option>
+        </select>
         <div className="grow" />
         <button className="btn primary" onClick={() => setShowCreate(true)}>+ Onboard Mandir</button>
       </div>
@@ -57,6 +89,8 @@ export function TenantsPage() {
           <tr>
             <th>Name</th>
             <th>Status</th>
+            <th>Login access</th>
+            <th>Devotee app</th>
             <th>Plan</th>
             <th>Tier</th>
             <th>Global sync</th>
@@ -70,15 +104,32 @@ export function TenantsPage() {
                 <Link to={`/mandirs/${t.id}`}>{t.name}</Link>
                 <div className="muted mono">{t.slug}</div>
               </td>
-              <td><Badge value={t.status} /></td>
-              <td>{t.plan}</td>
+              <td><Badge value={t.is_deleted ? 'deleted' : t.status} /></td>
+              <td data-testid={`access-${t.slug}`}>
+                {t.access_enabled ? (
+                  <span className="badge green">allowed</span>
+                ) : (
+                  <span className="badge red" title={t.access_block_reason ?? undefined}>
+                    blocked{t.access_block_reason ? ` · ${t.access_block_reason.replace(/_/g, ' ')}` : ''}
+                  </span>
+                )}
+              </td>
+              <td data-testid={`visible-${t.slug}`}>
+                {t.devotee_visible
+                  ? (t.access_enabled ? <span className="badge green">listed</span> : <span className="badge">on, but blocked</span>)
+                  : <span className="badge">hidden</span>}
+              </td>
+              <td>
+                {t.plan}
+                {t.is_custom_plan && <div className="muted" style={{ fontSize: 11 }}>custom pricing</div>}
+              </td>
               <td>{t.tenancy_tier.replace(/_/g, ' ')}</td>
               <td>{t.global_sync_enabled ? 'on' : 'off'}</td>
               <td>{t.pending_amount_paise ? formatPaise(t.pending_amount_paise) : '—'}</td>
             </tr>
           ))}
           {rows.length === 0 && (
-            <tr><td colSpan={6} className="muted">No mandirs found.</td></tr>
+            <tr><td colSpan={8} className="muted">No mandirs found.</td></tr>
           )}
         </tbody>
       </table>
@@ -111,6 +162,7 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
     upi_id: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_name: '',
     // directory listing
     global_sync_enabled: false,
+    devotee_visible: true,
   });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
@@ -145,6 +197,7 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
               admin_contact: pick({ name: form.admin_name, mobile: form.admin_mobile, email: form.admin_email }),
               address: pick({ line1: form.line1, line2: form.line2, state: form.state, city: form.city, pincode: form.pincode }),
               global_sync_enabled: form.global_sync_enabled,
+              devotee_visible: form.devotee_visible,
               ...pick({
                 mandir_mobile: form.mandir_mobile, mandir_email: form.mandir_email, website: form.website,
                 gstin: form.gstin, pan: form.pan, tan: form.tan,
@@ -224,8 +277,17 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
 
         <h4 className="form-section">Directory</h4>
         <label className="field-check">
+          <input
+            type="checkbox"
+            name="devotee_visible"
+            checked={form.devotee_visible}
+            onChange={(e) => setForm({ ...form, devotee_visible: e.target.checked })}
+          />
+          <span>Show this mandir to devotees (searchable in the devotee app)</span>
+        </label>
+        <label className="field-check">
           <input type="checkbox" checked={form.global_sync_enabled} onChange={(e) => setForm({ ...form, global_sync_enabled: e.target.checked })} />
-          <span>List on the public devotee/maharaj directory (global sync)</span>
+          <span>Mirror donations to the global ledger (global sync)</span>
         </label>
       </ActionForm>
     </Modal>

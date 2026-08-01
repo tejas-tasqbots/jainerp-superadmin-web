@@ -13,8 +13,13 @@ interface Plan {
   max_receipts_per_month: number;
   max_sms_per_month: number;
   max_storage_mb: number;
+  features?: Record<string, unknown>;
   is_active: boolean;
   sort_order: number;
+  /** Live temples on this plan (soft-deleted excluded) — set by the API. */
+  tenant_count: number;
+  /** How many of those additionally carry a per-tenant custom override. */
+  custom_override_count: number;
 }
 
 export function PlansPage() {
@@ -33,14 +38,17 @@ export function PlansPage() {
       <h1>Subscription Plans</h1>
       <ErrorBox error={error} />
       <div className="toolbar">
-        <p className="muted" style={{ margin: 0 }}>Define the plans mandirs can subscribe to. Prices are what temples pay; limits gate their usage.</p>
+        <p className="muted" style={{ margin: 0 }}>
+          Define the plans mandirs can subscribe to. Prices are what temples pay; limits gate their usage.
+          A single mandir can be given bespoke pricing without a new plan — see <b>Set custom plan</b> on its detail page.
+        </p>
         <div className="grow" />
         <button className="btn primary" onClick={() => setShowCreate(true)}>+ New Plan</button>
       </div>
 
       <table className="data">
         <thead>
-          <tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Users</th><th>Receipts/mo</th><th>SMS/mo</th><th>Active</th><th></th></tr>
+          <tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Users</th><th>Receipts/mo</th><th>SMS/mo</th><th>Mandirs</th><th>Active</th><th></th></tr>
         </thead>
         <tbody>
           {rows.map((p) => (
@@ -51,11 +59,34 @@ export function PlansPage() {
               <td>{p.max_users}</td>
               <td>{p.max_receipts_per_month}</td>
               <td>{p.max_sms_per_month}</td>
-              <td>{p.is_active ? <span className="badge green">Active</span> : <span className="badge">Inactive</span>}</td>
-              <td><button className="btn sm" onClick={() => setEditing(p)}>Edit</button></td>
+              <td data-testid={`plan-usage-${p.name}`}>
+                {p.tenant_count}
+                {p.custom_override_count > 0 && (
+                  <div className="muted" style={{ fontSize: 11 }}>{p.custom_override_count} custom</div>
+                )}
+              </td>
+              <td>{p.is_active ? <span className="badge green">Active</span> : <span className="badge">Archived</span>}</td>
+              <td>
+                <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>{' '}
+                {/* A plan in use can only be archived — deleting it would orphan
+                    the FK from tenants/subscriptions and break billing history. */}
+                <button
+                  className="btn sm danger"
+                  data-testid={`delete-plan-${p.name}`}
+                  disabled={p.tenant_count > 0}
+                  title={p.tenant_count > 0 ? 'In use — archive it instead (uncheck Active)' : 'Delete this unused plan'}
+                  onClick={async () => {
+                    if (!confirm(`Delete plan "${p.display_name}"? This cannot be undone.`)) return;
+                    try { await api(`/admin/plans/${p.id}`, { method: 'DELETE' }); load(); }
+                    catch (e) { setError(e); }
+                  }}
+                >
+                  Delete
+                </button>
+              </td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={8} className="muted">No plans defined yet.</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={9} className="muted">No plans defined yet.</td></tr>}
         </tbody>
       </table>
 
