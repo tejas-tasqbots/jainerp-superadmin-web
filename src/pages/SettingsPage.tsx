@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, formatDate, publicApi, loadSession, type ApiMeta } from '../api/client';
+import { api, publicApi, loadSession, type ApiMeta } from '../api/client';
 import { PhoneInput } from '../components/PhoneInput';
 import type { AdminUser, AuditEvent } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
@@ -121,8 +121,6 @@ function CreateUserForm({ onCreated }: { onCreated: (token: string) => void }) {
   const [form, setForm] = useState({ name: '', email: '', mobile: '', role: 'support' });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
-  const setMobile = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm({ ...form, mobile: e.target.value.replace(/\D/g, '').slice(0, 10) });
 
   return (
     <ActionForm submitLabel="Create"
