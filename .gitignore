@@ -56,3 +56,6 @@ Thumbs.db
 .cache/
 .tmp/
 e2e/screens/
+# QA sweeps write here too (button sweeps, sa-flow). Same intent as the rule
+# above — screenshots are run output, not source; this one grew to 12 MB.
+e2e/full/screens/

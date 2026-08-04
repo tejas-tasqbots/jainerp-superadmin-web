@@ -264,6 +264,17 @@ async function visibilityAndBillingSuite(token) {
   // devotee in through the OTP_MOCK bypass so the visibility checks are real.
   const devoteeToken = await devoteeLogin(DEVOTEE_API, devoteeMobile);
 
+  // Five cases below (SA-VIS-05/06/06b/07/09b) sit behind `if (devoteeToken)`.
+  // When devotee-api is down they do not fail — they simply never record, and
+  // the suite prints a smaller green total. Passes of this suite have reported
+  // 84, 87 and 93 cases; a green "84/84" and a green "93/93" look equally good
+  // and cover different amounts of the product. Asserting the dependency turns
+  // that silent shrinkage into a visible failure, which is the whole point of
+  // running the suite.
+  record('SA-VIS-DEP', 'P1', 'devotee-api is reachable, so the cross-app visibility cases actually run',
+    !!devoteeToken,
+    devoteeToken ? 'devotee session acquired' : 'devotee-api unreachable — SA-VIS-05/06/06b/07/09b were SKIPPED, not passed');
+
   // ---- provision a disposable mandir ----
   const created = await http('POST', '/admin/tenants', {
     token,
@@ -494,8 +505,11 @@ async function visibilityAndBillingSuite(token) {
   const patchPlan = await http('PATCH', `/admin/plans/${planId}`, {
     token, body: { display_name: `QA Plan ${run} v2`, max_users: 9 },
   });
-  record('SA-PLN-03', 'P1', 'update a plan',
-    patchPlan.status === 200 && patchPlan.data?.maxUsers === 9, `max_users=${patchPlan.data?.maxUsers}`);
+  // snake_case like every other admin endpoint — this used to read `maxUsers`,
+  // matching a leaked TypeORM entity that broke the whole Plans screen.
+  record('SA-PLN-03', 'P1', 'update a plan (snake_case response)',
+    patchPlan.status === 200 && patchPlan.data?.max_users === 9 && patchPlan.data?.display_name === `QA Plan ${run} v2`,
+    `max_users=${patchPlan.data?.max_users} display_name=${patchPlan.data?.display_name}`);
 
   const planList = await http('GET', '/admin/plans', { token });
   const stdPlan = (planList.data ?? []).find((p) => p.name === 'standard');
@@ -571,6 +585,34 @@ async function visibilityAndBillingSuite(token) {
     upgrade.status === 200
       && (afterUpgrade.data?.plan_changes ?? []).some((c) => c.change_type === 'plan' && c.to_value === 'premium'),
     `changes=${afterUpgrade.data?.plan_changes?.length}`);
+
+  // ---------------- MODERATION QUEUE (change requests) ----------------
+  // This queue had no API-level coverage at all until now — which is how
+  // DEF-SA-01 (the page white-screened on a double-wrapped envelope) and
+  // DEF-SANT-04 (the subject vocabulary) both reached a human before a test.
+  //
+  // `subject_type` is a discriminator stored as DATA, not as an identifier, so
+  // the 2026-08-03 sant rename greped straight past it: migration 034 began
+  // writing 'sant' while migration 028 was still storing 'maharaj', leaving two
+  // adjacent tables using different words for the same subject. Nothing threw —
+  // a query spanning both would simply have returned nothing.
+  const queue = await http('GET', '/admin/change-requests?limit=50', { token });
+  const queueRows = queue.data?.rows ?? queue.data ?? [];
+  record('SA-CR-01', 'P1', 'the moderation queue returns a plain array the page can map over',
+    queue.status === 200 && Array.isArray(queueRows),
+    `status=${queue.status} type=${Array.isArray(queueRows) ? 'array' : typeof queueRows}`);
+
+  record('SA-CR-02', 'P1', "no correction is still stored under the pre-035 spelling 'maharaj'",
+    queueRows.every((r) => r.subject_type !== 'maharaj'),
+    `stored: ${[...new Set(queueRows.map((r) => r.subject_type))].join(',') || 'queue empty'}`);
+
+  const asAscetic = await http('GET', '/admin/change-requests?subject_type=sant&limit=50', { token });
+  const asLegacy = await http('GET', '/admin/change-requests?subject_type=maharaj&limit=50', { token });
+  const nAscetic = (asAscetic.data?.rows ?? asAscetic.data ?? []).length;
+  const nLegacy = (asLegacy.data?.rows ?? asLegacy.data ?? []).length;
+  record('SA-CR-03', 'P2', 'both spellings resolve to the same queue (rolling-deploy safety)',
+    asAscetic.status === 200 && asLegacy.status === 200 && nAscetic === nLegacy,
+    `sant=${nAscetic} maharaj=${nLegacy}`);
 
   // ---- cleanup: leave the estate tidy ----
   await http('DELETE', `/admin/tenants/${id}`, { token, body: { confirm_slug: slug, reason: 'QA suite cleanup' } });

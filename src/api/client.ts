@@ -150,7 +150,15 @@ export async function openReceipt(path: string): Promise<void> {
 
 export function formatPaise(paise: number | null | undefined): string {
   if (paise == null) return '—';
-  return '₹' + (paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  const rupees = paise / 100;
+  // Paise must never render as a single decimal — ₹3,43,167.6 next to
+  // ₹53,476.16 reads like a different precision. Show both paise digits when
+  // there are any; keep whole rupees clean (₹999, not ₹999.00).
+  const hasPaise = paise % 100 !== 0;
+  return '₹' + rupees.toLocaleString('en-IN', {
+    minimumFractionDigits: hasPaise ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 }
 
 export function formatDate(d: string | Date | null | undefined): string {

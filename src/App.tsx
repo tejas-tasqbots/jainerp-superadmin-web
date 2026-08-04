@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Landmark, Users, Sparkles, Package, Settings as SettingsIcon, ShieldCheck, LogOut } from 'lucide-react';
+import { LayoutDashboard, Landmark, Users, Sparkles, Package, Settings as SettingsIcon, ShieldCheck, Compass, LogOut } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
@@ -7,6 +7,7 @@ import { LoginPage } from './pages/LoginPage';
 import { MaharajPage } from './pages/MaharajPage';
 import { ChangeRequestsPage } from './pages/ChangeRequestsPage';
 import { PlansPage } from './pages/PlansPage';
+import { SectReadinessPage } from './pages/SectReadinessPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TenantDetailPage } from './pages/TenantDetailPage';
@@ -16,9 +17,10 @@ const navItems = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} />, end: true },
   { to: '/mandirs', label: 'Manage Mandir', icon: <Landmark size={18} /> },
   { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
-  { to: '/maharaj', label: 'Maharaj / Mataji', icon: <Sparkles size={18} /> },
+  { to: '/maharaj', label: 'Sadhu-Sadhvi', icon: <Sparkles size={18} /> },
   { to: '/change-requests', label: 'Change Requests', icon: <ShieldCheck size={18} /> },
   { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
+  { to: '/sect-readiness', label: 'Sampradaya', icon: <Compass size={18} /> },
   { to: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
 ];
 
@@ -65,6 +67,7 @@ function Layout() {
           <Route path="/maharaj" element={<MaharajPage />} />
           <Route path="/change-requests" element={<ChangeRequestsPage />} />
           <Route path="/plans" element={<PlansPage />} />
+          <Route path="/sect-readiness" element={<SectReadinessPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

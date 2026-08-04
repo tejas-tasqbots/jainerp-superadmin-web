@@ -159,6 +159,29 @@
   label.field-check { @apply flex items-center gap-2 text-sm text-slate-700 mb-3; }
   label.field-check > span { @apply font-medium; }
 
+  /* ── Module picker (per-tenant entitlements, migration 031) ─────────────── */
+  .module-presets { @apply flex flex-wrap gap-2 mb-1; }
+  .chip {
+    @apply px-3 py-1 text-xs font-medium rounded-full border cursor-pointer transition-colors;
+    border-color: var(--color-border, #e2e8f0);
+    @apply bg-white text-slate-600 hover:bg-slate-50;
+  }
+  .chip:disabled { @apply opacity-50 cursor-not-allowed; }
+  .chip.chip-active {
+    background: var(--color-brand-blue); border-color: var(--color-brand-blue);
+    @apply text-white;
+  }
+  /* Two columns so a 14-module list stays readable inside a modal without
+     turning the onboarding form into an endless scroll. */
+  .module-grid { @apply grid grid-cols-2 gap-x-4 gap-y-1.5 mb-3; }
+  label.module-item { @apply flex items-start gap-2 text-sm text-slate-700 cursor-pointer; }
+  label.module-item > input { @apply mt-0.5; }
+  .setup-checklist {
+    @apply rounded-md p-3 mb-2;
+    background: var(--color-brand-gold-light, #fef9e7);
+    color: var(--color-brand-gold-dark, #7a5c00);
+  }
+
   /* ── Badges (pill) ──────────────────────────────────────────────────────── */
   .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold; }
   .badge.active, .badge.paid, .badge.verified, .badge.done {

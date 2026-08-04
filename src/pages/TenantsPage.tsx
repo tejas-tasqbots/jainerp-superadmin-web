@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, formatPaise, type ApiMeta } from '../api/client';
 import type { TenantRow } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
+import { ModulePicker } from '../components/ModulePicker';
 
 const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
 const TIERS = ['pooled', 'dedicated'];
@@ -141,6 +142,17 @@ export function TenantsPage() {
 }
 
 const TEMPLE_TYPES = ['jain', 'hindu', 'sikh', 'buddhist', 'gurudwara', 'church'];
+
+/**
+ * What a new mandir starts with when the operator does not touch the Modules
+ * section — everything optional, i.e. the behaviour before entitlements existed.
+ * The server applies the same default when `modules` is omitted entirely; this
+ * only pre-ticks the boxes so the choice is visible rather than implicit.
+ */
+const FULL_MANDIR_DEFAULT = [
+  'dharamshala', 'bhojanshala', 'prasad', 'seva', 'events', 'bolis', 'annadaan',
+  'compliance', 'certificates', 'creditors', 'fixed_assets', 'sant', 'frontdesk',
+];
 /** Send only filled-in optional fields so the API keeps them null otherwise. */
 function pick<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== '' && v != null)) as Partial<T>;
@@ -160,12 +172,32 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
     gstin: '', pan: '', tan: '', reg_80g_number: '', reg_12a_number: '', reg_12ab_number: '',
     // bank / UPI
     upi_id: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_name: '',
+    // sampradaya (migration 032) — only meaningful for a Jain trust
+    sect: '', sub_sect: '',
     // directory listing
     global_sync_enabled: false,
     devotee_visible: true,
   });
+  // Which optional modules this trust starts with (migration 031). Defaults to
+  // the Full Mandir preset, so an operator who ignores this section onboards
+  // exactly what they always did.
+  const [modules, setModules] = useState<string[]>(FULL_MANDIR_DEFAULT);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
+
+  /**
+   * Switching away from a Jain trust clears the sampradaya.
+   *
+   * The Sampradaya section only renders for `temple_type === 'jain'`, but
+   * hiding it left the values in state and `pick()` still posted them — so an
+   * operator who chose a sect and then changed the temple type silently sent a
+   * Jain sampradaya for a Hindu trust. The API refuses that now; clearing here
+   * means they never see the error in the first place.
+   */
+  const setTempleType = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const temple_type = e.target.value;
+    setForm({ ...form, temple_type, ...(temple_type === 'jain' ? {} : { sect: '', sub_sect: '' }) });
+  };
 
   // States + cities from the bundled India geo lookup.
   const [states, setStates] = useState<string[]>([]);
@@ -198,6 +230,8 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
               address: pick({ line1: form.line1, line2: form.line2, state: form.state, city: form.city, pincode: form.pincode }),
               global_sync_enabled: form.global_sync_enabled,
               devotee_visible: form.devotee_visible,
+              modules,
+              ...pick({ sect: form.sect, sub_sect: form.sub_sect }),
               ...pick({
                 mandir_mobile: form.mandir_mobile, mandir_email: form.mandir_email, website: form.website,
                 gstin: form.gstin, pan: form.pan, tan: form.tan,
@@ -212,7 +246,7 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
         <h4 className="form-section">Mandir & plan</h4>
         <label className="field"><span>Mandir name *</span><input name="name" value={form.name} onChange={set('name')} required /></label>
         <label className="field"><span>Temple type</span>
-          <select name="temple_type" value={form.temple_type} onChange={set('temple_type')}>{TEMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+          <select name="temple_type" value={form.temple_type} onChange={setTempleType}>{TEMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
         </label>
         <label className="field"><span>Plan</span>
           <select name="plan" value={form.plan} onChange={set('plan')}>{PLANS.map((p) => <option key={p}>{p}</option>)}</select>
@@ -229,7 +263,35 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
           </select>
         </label>
 
-        <h4 className="form-section">Admin contact (signs into devmandir.com)</h4>
+        {form.temple_type === 'jain' && (
+          <>
+            <h4 className="form-section">Sampradaya</h4>
+            <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+              Leave blank if unsure — blank keeps the trust visible to every devotee.
+              A wrong value hides it from exactly the devotees it serves, so a guess
+              is worse than nothing.
+            </p>
+            <label className="field"><span>Sect</span>
+              <select name="sect" value={form.sect} onChange={set('sect')}>
+                <option value="">Not recorded</option>
+                <option value="digambar">Digambar</option>
+                <option value="shwetambar">Shwetambar</option>
+              </select>
+            </label>
+            <label className="field"><span>Panth / Gaccha (optional)</span>
+              <input name="sub_sect" value={form.sub_sect} onChange={set('sub_sect')} placeholder="Terapanth, Bisapanth, Murtipujak…" />
+            </label>
+          </>
+        )}
+
+        <h4 className="form-section">Modules</h4>
+        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+          Not every trust is a full temple. Pick a preset, or tick exactly what
+          this one runs — it can be changed later from the mandir's page.
+        </p>
+        <ModulePicker value={modules} onChange={setModules} templeType={form.temple_type} />
+
+        <h4 className="form-section">Admin contact</h4>
         <label className="field"><span>Admin name *</span><input name="admin_name" value={form.admin_name} onChange={set('admin_name')} required /></label>
         <label className="field"><span>Admin mobile (10-digit) *</span>
           <input name="admin_mobile" value={form.admin_mobile} onChange={set('admin_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" required />

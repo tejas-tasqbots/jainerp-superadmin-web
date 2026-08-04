@@ -13,7 +13,9 @@ import { Badge, ErrorBox, Modal } from '../components/ui';
 
 interface ChangeRequest {
   id: string;
-  subject_type: 'tenant' | 'maharaj';
+  // 'maharaj' is the pre-migration-035 value; still tolerated on read for one
+  // release because an older sant-api may write it during a rolling deploy.
+  subject_type: 'tenant' | 'sant' | 'maharaj';
   subject_id: string;
   subject_label: string | null;
   field: string;
@@ -115,7 +117,7 @@ export function ChangeRequestsPage() {
         <select value={subjectType} onChange={(e) => setSubjectType(e.target.value)}>
           <option value="">Mandirs & ascetics</option>
           <option value="tenant">Mandirs</option>
-          <option value="maharaj">Ascetics</option>
+          <option value="sant">Ascetics</option>
         </select>
       </div>
 

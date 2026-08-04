@@ -22,6 +22,12 @@ interface Plan {
   custom_override_count: number;
 }
 
+/** Limit columns store -1 to mean "no cap" — never show the sentinel raw. */
+function limit(n: number | null | undefined): string {
+  if (n == null) return '—';
+  return n < 0 ? 'Unlimited' : String(n);
+}
+
 export function PlansPage() {
   const [rows, setRows] = useState<Plan[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -54,11 +60,12 @@ export function PlansPage() {
           {rows.map((p) => (
             <tr key={p.id}>
               <td><strong>{p.display_name}</strong><br /><span className="muted mono">{p.name}</span></td>
-              <td>{p.price_monthly_paise > 0 ? `₹${formatPaise(p.price_monthly_paise)}` : 'Free'}</td>
-              <td>{p.price_yearly_paise > 0 ? `₹${formatPaise(p.price_yearly_paise)}` : 'Free'}</td>
-              <td>{p.max_users}</td>
-              <td>{p.max_receipts_per_month}</td>
-              <td>{p.max_sms_per_month}</td>
+              {/* formatPaise already prefixes ₹ — adding another gave "₹₹999". */}
+              <td>{p.price_monthly_paise > 0 ? formatPaise(p.price_monthly_paise) : 'Free'}</td>
+              <td>{p.price_yearly_paise > 0 ? formatPaise(p.price_yearly_paise) : 'Free'}</td>
+              <td>{limit(p.max_users)}</td>
+              <td>{limit(p.max_receipts_per_month)}</td>
+              <td>{limit(p.max_sms_per_month)}</td>
               <td data-testid={`plan-usage-${p.name}`}>
                 {p.tenant_count}
                 {p.custom_override_count > 0 && (

@@ -32,7 +32,7 @@ export function MaharajPage() {
 
   return (
     <div>
-      <h1>Maharaj / Mataji Directory</h1>
+      <h1>Sadhu-Sadhvi Directory</h1>
       <ErrorBox error={error} />
       <div className="toolbar">
         <input placeholder="Search name / samuday…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
@@ -42,7 +42,7 @@ export function MaharajPage() {
           <option value="true">Verified</option>
         </select>
         <div className="grow" />
-        <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add Maharaj / Mataji</button>
+        <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add Sadhu-Sadhvi</button>
       </div>
 
       <table className="data">
@@ -79,7 +79,7 @@ export function MaharajPage() {
       {meta && <Pagination page={page} total={meta.total} limit={25} onPage={setPage} />}
 
       {showCreate && (
-        <Modal title="Add Maharaj / Mataji" onClose={() => setShowCreate(false)}>
+        <Modal title="Add Sadhu-Sadhvi" onClose={() => setShowCreate(false)}>
           <MaharajCreateForm onDone={() => { setShowCreate(false); load(); }} />
         </Modal>
       )}
@@ -112,7 +112,7 @@ const SECTS: { value: string; label: string }[] = [
 
 function MaharajCreateForm({ onDone }: { onDone: () => void }) {
   const [form, setForm] = useState({
-    name: '', type: 'muni', samuday: '', state: '', city: '',
+    name: '', type: 'muni', samuday: '', sect: '', sub_sect: '', state: '', city: '',
     diksha_year: '', guru_name: '', bio: '', rep_mobile: '', verified: false,
   });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -125,6 +125,11 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
           method: 'POST',
           body: {
             name: form.name, type: form.type, samuday: form.samuday || undefined,
+            // Sampradaya is a separate field from samuday (migration 024) and
+            // this form never sent it, so every sant added from the console
+            // arrived sect NULL. `|| undefined` because the DTO validates
+            // against the two sects — '' would 400.
+            sect: form.sect || undefined, sub_sect: form.sub_sect || undefined,
             state: form.state || undefined, city: form.city || undefined,
             diksha_year: form.diksha_year ? Number(form.diksha_year) : undefined,
             guru_name: form.guru_name || undefined, bio: form.bio || undefined,
@@ -136,7 +141,21 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
       <label className="field"><span>Type</span>
         <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
       </label>
-      <label className="field"><span>Samuday / Sect</span><input value={form.samuday} onChange={set('samuday')} placeholder="e.g. Tapagachha" /></label>
+      {/* samuday, sect and sub_sect are three different things (migration 024).
+          This field was labelled "Samuday / Sect" and suggested "Tapagachha" —
+          a gaccha, i.e. a sub_sect — which conflated all three at once. */}
+      <label className="field"><span>Samuday (community)</span><input value={form.samuday} onChange={set('samuday')} placeholder="e.g. Oswal, Porwal, Agarwal" /></label>
+      <label className="field"><span>Sampradaya</span>
+        <select value={form.sect} onChange={(e) => setForm({ ...form, sect: e.target.value, sub_sect: '' })}>
+          {SECTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+      </label>
+      {form.sect && (
+        <label className="field"><span>Panth / Gaccha</span>
+          <input value={form.sub_sect} onChange={set('sub_sect')}
+            placeholder={form.sect === 'digambar' ? 'Terapanth, Bisapanth, Taran Panth…' : 'Murtipujak, Sthanakvasi, Tapagachha…'} />
+        </label>
+      )}
       <label className="field"><span>State</span>
         <StateSelect value={form.state} onChange={(s) => setForm({ ...form, state: s, city: '' })} />
       </label>
@@ -197,7 +216,8 @@ function MaharajManage({ id, onClose, onChanged }: { id: string; onClose: () => 
 
 function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => void; onDeleted: () => void }) {
   const [form, setForm] = useState({
-    name: p.name, type: p.type, samuday: p.samuday ?? '', state: p.state ?? '', city: p.city ?? '',
+    name: p.name, type: p.type, samuday: p.samuday ?? '',
+    sect: p.sect ?? '', sub_sect: p.sub_sect ?? '', state: p.state ?? '', city: p.city ?? '',
     diksha_year: p.diksha_year != null ? String(p.diksha_year) : '', guru_name: p.guru_name ?? '',
     bio: p.bio ?? '', languages: (p.languages ?? []).join(', '), photo_url: p.photo_url ?? '', verified: p.verified,
   });
@@ -212,6 +232,11 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
             method: 'PATCH',
             body: {
               name: form.name, type: form.type, samuday: form.samuday || null,
+              // Editable so the readiness report's outstanding sants can be
+              // fixed here. `undefined` (omit) rather than null when unset:
+              // the DTO validates against the two sects, so '' or null would
+              // be rejected — leaving it out keeps whatever is on file.
+              sect: form.sect || undefined, sub_sect: form.sub_sect || undefined,
               state: form.state || null, city: form.city || null,
               diksha_year: form.diksha_year ? Number(form.diksha_year) : null,
               guru_name: form.guru_name || null, bio: form.bio || null, photo_url: form.photo_url || null,
@@ -226,7 +251,18 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
         <label className="field"><span>Type</span>
           <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
         </label>
-        <label className="field"><span>Samuday / Sect</span><input value={form.samuday} onChange={set('samuday')} /></label>
+        <label className="field"><span>Samuday (community)</span><input value={form.samuday} onChange={set('samuday')} placeholder="e.g. Oswal, Porwal, Agarwal" /></label>
+        <label className="field"><span>Sampradaya</span>
+          <select value={form.sect} onChange={(e) => setForm({ ...form, sect: e.target.value, sub_sect: '' })}>
+            {SECTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </label>
+        {form.sect && (
+          <label className="field"><span>Panth / Gaccha</span>
+            <input value={form.sub_sect} onChange={set('sub_sect')}
+              placeholder={form.sect === 'digambar' ? 'Terapanth, Bisapanth, Taran Panth…' : 'Murtipujak, Sthanakvasi, Tapagachha…'} />
+          </label>
+        )}
         <label className="field"><span>State</span>
           <StateSelect value={form.state} onChange={(s) => setForm({ ...form, state: s, city: '' })} />
         </label>

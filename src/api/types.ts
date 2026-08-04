@@ -209,8 +209,21 @@ export interface MaharajProfile {
   id: string;
   rep_user_id: string | null;
   name: string;
-  type: 'maharaj' | 'mataji';
+  // The canonical RANK, which is what the column stores and what migration 024's
+  // CHECK enforces. It previously read `'maharaj' | 'mataji'` — two values the
+  // API can no longer send and the database actively rejects. Nothing caught it
+  // because the rank `<select>` is typed `{ value: string }[]`, so TypeScript
+  // never compared the two; the only visible effect was that a correct test like
+  // `p.type === 'muni'` was rejected as an impossible comparison.
+  // "Maharaj" is a form of ADDRESS for a Muni, not a rank — it is rendered from
+  // this value, never stored.
+  type: 'muni' | 'aryika' | 'kshullak' | 'kshullika' | 'ailak';
+  /** Community (Oswal, Porwal, Agarwal…). NOT the sect — migration 024 split these apart. */
   samuday: string | null;
+  /** Sampradaya (digambar|shwetambar). Selected by the API's list and detail queries. */
+  sect: 'digambar' | 'shwetambar' | null;
+  /** Panth/gaccha (Terapanth, Bisapanth, Tapagachha…). Free text by design. */
+  sub_sect: string | null;
   city: string | null;
   state: string | null;
   current_city: string | null;

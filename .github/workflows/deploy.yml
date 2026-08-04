@@ -38,7 +38,7 @@ jobs:
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ github.sha }}
 
-      - name: Deploy on EC2 (restart superadmin-web only)
+      - name: Deploy on EC2 (superadmin-web only)
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -48,13 +48,72 @@ jobs:
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
+          # The remote body is a here-doc so it can hold a lock, retry the
+          # recreate and health-gate the result.
+          #
+          # Why the lock: all eight apps share one EC2 box, and GitHub's
+          # `concurrency:` is scoped to a single repository — it cannot serialise
+          # six repos deploying at once. On 2026-08-01 three deploys failed and a
+          # fourth reported success while still serving its old image.
+          #
+          # Why no `docker system prune -f`: that was the cause. Run concurrently
+          # it deletes another job's freshly pulled image mid-deploy. Disk is
+          # reclaimed by a scheduled cleanup on the box instead (deploy/cleanup.sh),
+          # never inline with a deploy.
           ssh -i /tmp/deploy_key \
             -o StrictHostKeyChecking=no \
             -o ConnectTimeout=30 \
             "$EC2_USER@$EC2_HOST" \
-            "cd /opt/jainerp && \
-             echo $GHCR_PAT | docker login ghcr.io -u $GHCR_USER --password-stdin && \
-             docker system prune -f && \
-             docker compose -f docker-compose.aws.yml --env-file .env.aws pull superadmin-web && \
-             docker compose -f docker-compose.aws.yml --env-file .env.aws up -d superadmin-web"
+            GHCR_PAT="$GHCR_PAT" GHCR_USER="$GHCR_USER" TAG="${{ github.sha }}" 'bash -s' <<'REMOTE'
+          set -uo pipefail
+          cd /opt/jainerp
+
+          # Serialise with every other repo's deploy on this box. 600s is well
+          # past a normal deploy, so a stuck job fails loudly instead of hanging.
+          exec 9>/var/lock/jainerp-deploy.lock
+          if ! flock -w 600 9; then
+            echo "::error::timed out waiting for the shared deploy lock"
+            exit 1
+          fi
+
+          echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          # Start exactly the image this run built, not whatever :latest points
+          # at by the time compose gets there.
+          export SUPERADMIN_WEB_TAG="$TAG"
+          COMPOSE="docker compose -f docker-compose.aws.yml --env-file .env.aws"
+          $COMPOSE pull superadmin-web
+
+          # Recreate, retrying once on the transient "No such container" race.
+          up() { $COMPOSE up -d --force-recreate --remove-orphans superadmin-web; }
+          if ! up; then
+            echo "compose up failed - retrying once after 5s..."
+            sleep 5
+            up || echo "compose up failed twice"
+          fi
+
+          # Health-gate: it must actually serve, else fail the deploy. A green
+          # check on a stale container is worse than a red one.
+          ok=0
+          for i in $(seq 1 20); do
+            if curl -fs -m 5 http://localhost:8080/ >/dev/null 2>&1; then
+              ok=1; echo "health OK after ${i} tries"; break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::superadmin-web did not become healthy after deploy"
+            docker ps -a --filter name=jainerp-superadmin-web --format "{{.Names}} {{.Status}}"
+            docker logs --tail 40 jainerp-superadmin-web 2>&1 | grep -viE "password|secret" || true
+            exit 1
+          fi
+
+          # Prove the running container is the image this run pushed.
+          running="$(docker inspect --format '{{.Config.Image}}' jainerp-superadmin-web 2>/dev/null || echo unknown)"
+          echo "running image: $running"
+          case "$running" in
+            *:"$TAG") echo "deploy healthy, serving $TAG." ;;
+            *) echo "::error::jainerp-superadmin-web is serving $running, expected tag $TAG"; exit 1 ;;
+          esac
+          REMOTE
           rm -f /tmp/deploy_key

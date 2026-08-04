@@ -4,6 +4,7 @@ import { api, formatDate, formatPaise, openReceipt } from '../api/client';
 import { PhoneInput } from '../components/PhoneInput';
 import type { BillingHistory, Invoice, License, LifecycleEvent, TenantDetail } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal } from '../components/ui';
+import { ModulePicker } from '../components/ModulePicker';
 
 const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
 const TIERS = ['pooled', 'dedicated'];
@@ -60,7 +61,7 @@ export function TenantDetailPage() {
 function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (msg: string) => void }) {
   const navigate = useNavigate();
   const [modal, setModal] = useState<
-    'plan' | 'tier' | 'suspend' | 'cancel' | 'deactivate' | 'custom-plan' | null
+    'plan' | 'tier' | 'suspend' | 'cancel' | 'deactivate' | 'custom-plan' | 'modules' | null
   >(null);
   const [error, setError] = useState<unknown>(null);
 
@@ -190,6 +191,9 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
           <button className="btn" data-testid="custom-plan-btn" onClick={() => setModal('custom-plan')}>
             {tenant.custom_plan ? 'Edit custom plan' : 'Set custom plan'}
           </button>
+          <button className="btn" data-testid="modules-btn" onClick={() => setModal('modules')}>
+            Modules…
+          </button>
           {/* Verifying locks the mandir's bank/80G/PAN details: after this they
               can only change via a reviewed request (migration 028). */}
           <button
@@ -238,6 +242,11 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
       {modal === 'deactivate' && (
         <Modal title="Deactivate mandir (block all staff logins)" onClose={() => setModal(null)}>
           <DeactivateForm tenantId={tenant.id} onDone={() => { setModal(null); onChanged('Mandir deactivated — staff can no longer sign in'); }} />
+        </Modal>
+      )}
+      {modal === 'modules' && (
+        <Modal title="Modules for this mandir" onClose={() => setModal(null)}>
+          <ModulesForm tenantId={tenant.id} onDone={(msg) => { setModal(null); onChanged(msg); }} />
         </Modal>
       )}
       {modal === 'custom-plan' && (
@@ -1050,6 +1059,58 @@ function IssueLicenseForm({ tenantId, onDone }: { tenantId: string; onDone: () =
       }}>
       <label className="field"><span>Device seats</span><input type="number" min={1} value={seats} onChange={(e) => setSeats(Number(e.target.value))} /></label>
       <label className="field"><span>Expires</span><input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} /></label>
+    </ActionForm>
+  );
+}
+
+/**
+ * Grant or revoke this mandir's optional modules — the upsell path.
+ *
+ * Sends the whole list rather than a diff: "these are the modules this trust
+ * has" is unambiguous, where add/remove invites two consoles racing to a state
+ * neither operator intended. Core modules are never sent; the server refuses
+ * them with 400 CORE_MODULE.
+ */
+function ModulesForm({ tenantId, onDone }: { tenantId: string; onDone: (msg: string) => void }) {
+  const [current, setCurrent] = useState<string[] | null>(null);
+  const [templeType, setTempleType] = useState<string | undefined>(undefined);
+  const [planModules, setPlanModules] = useState<string[]>([]);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    api<{ tenant_modules: string[]; plan_modules: string[]; temple_type: string }>(
+      `/admin/tenants/${tenantId}/modules`,
+    )
+      .then((r) => {
+        setCurrent(r.data.tenant_modules ?? []);
+        setPlanModules(r.data.plan_modules ?? []);
+        setTempleType(r.data.temple_type);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : 'Failed to load modules'));
+  }, [tenantId]);
+
+  if (err) return <ErrorBox error={err} />;
+  if (!current) return <p className="muted">Loading…</p>;
+
+  return (
+    <ActionForm
+      submitLabel="Save modules"
+      onDone={() => onDone('Modules updated')}
+      onSubmit={async () => {
+        await api(`/admin/tenants/${tenantId}/modules`, { method: 'PUT', body: { modules: current } });
+      }}
+    >
+      {planModules.length > 0 && (
+        <p className="muted" style={{ fontSize: 12 }}>
+          The plan already includes {planModules.join(', ')} for every mandir on it.
+          Those stay on regardless of what is ticked here — change the plan to alter them.
+        </p>
+      )}
+      <ModulePicker value={current} onChange={setCurrent} templeType={templeType} />
+      <p className="muted" style={{ fontSize: 12 }}>
+        Takes effect at the mandir within about 30 seconds — each API caches the
+        tenant briefly, and there is no cross-process invalidation to shortcut it.
+      </p>
     </ActionForm>
   );
 }
