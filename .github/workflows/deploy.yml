@@ -13,7 +13,23 @@ env:
   IMAGE: ghcr.io/tasqbots/jainerp-superadmin-web
 
 jobs:
+  # Nothing gated this deploy: a push went straight to a docker build and out to
+  # the box, so a lint or type error only surfaced if it happened to break the
+  # image build. This job runs the checks first and the deploy waits on it.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
   build-and-deploy:
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read

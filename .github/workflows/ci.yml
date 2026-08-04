@@ -1,8 +1,9 @@
 name: CI
 
+# Pull requests only. Pushes to main are checked by the `verify` job in the
+# deploy workflow, which the deploy itself waits on — running both here would
+# just duplicate the same work on every merge.
 on:
-  push:
-    branches: [main]
   pull_request:
 
 concurrency:
