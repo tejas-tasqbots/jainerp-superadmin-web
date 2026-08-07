@@ -91,7 +91,7 @@ export function ModulePicker({
   );
 
   return (
-    <div className="module-picker">
+    <div>
       <div className="module-presets">
         {registry.presets.map((p) => (
           <button

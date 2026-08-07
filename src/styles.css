@@ -194,6 +194,11 @@
     background: var(--color-brand-gold-light); color: var(--color-brand-gold-dark);
   }
   .badge.cancelled, .badge.void, .badge.unverified { @apply bg-slate-100 text-slate-600; }
+  /* Colour-named variants for states with no status word of their own —
+     access allowed/blocked, plan active/archived. Without these the pill fell
+     back to bare `.badge` and rendered colourless, losing the whole signal. */
+  .badge.green { background: var(--color-brand-green-light); color: var(--color-brand-green-dark); }
+  .badge.red   { background: var(--color-brand-red-light);   color: var(--color-brand-red-dark); }
 
   /* ── Modal ──────────────────────────────────────────────────────────────── */
   .modal-overlay {

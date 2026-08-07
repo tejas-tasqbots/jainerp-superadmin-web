@@ -82,9 +82,12 @@ export function ChangeRequestsPage() {
     setSaving(true);
     setError(null);
     try {
+      // `api()` serialises the body itself — passing a pre-stringified body
+      // would send a bare JSON *string*, which body-parser rejects in strict
+      // mode ("Unexpected token '\"' … is not valid JSON").
       await api(`/admin/change-requests/${review.row.id}/${review.mode}`, {
         method: 'PATCH',
-        body: JSON.stringify({ note: note.trim() || undefined }),
+        body: { note: note.trim() || undefined },
       });
       setReview(null);
       setNote('');
@@ -121,7 +124,7 @@ export function ChangeRequestsPage() {
         </select>
       </div>
 
-      <table>
+      <table className="data">
         <thead>
           <tr>
             <th>Who</th>
@@ -142,7 +145,7 @@ export function ChangeRequestsPage() {
             <tr key={r.id}>
               <td>
                 {r.subject_label || r.subject_id}
-                <div className="muted small">{r.subject_type === 'tenant' ? 'Mandir' : 'Ascetic'}</div>
+                <div className="muted text-xs">{r.subject_type === 'tenant' ? 'Mandir' : 'Ascetic'}</div>
               </td>
               <td>{FIELD_LABELS[r.field] ?? r.field}</td>
               <td className="mono">{r.current_value || '—'}</td>
@@ -150,19 +153,19 @@ export function ChangeRequestsPage() {
               <td>{r.reason || <span className="muted">—</span>}</td>
               <td>
                 {formatDate(r.requested_at)}
-                {r.requested_by_name && <div className="muted small">{r.requested_by_name}</div>}
+                {r.requested_by_name && <div className="muted text-xs">{r.requested_by_name}</div>}
               </td>
               <td>
                 <Badge value={r.status} />
-                {r.review_note && <div className="muted small">{r.review_note}</div>}
+                {r.review_note && <div className="muted text-xs">{r.review_note}</div>}
               </td>
               <td>
                 {r.status === 'pending' && (
-                  <div className="row-actions">
-                    <button onClick={() => { setNote(''); setReview({ row: r, mode: 'approve' }); }}>
+                  <div className="flex gap-2">
+                    <button className="btn sm" onClick={() => { setNote(''); setReview({ row: r, mode: 'approve' }); }}>
                       Approve
                     </button>
-                    <button className="danger" onClick={() => { setNote(''); setReview({ row: r, mode: 'reject' }); }}>
+                    <button className="btn sm danger" onClick={() => { setNote(''); setReview({ row: r, mode: 'reject' }); }}>
                       Reject
                     </button>
                   </div>
@@ -191,14 +194,14 @@ export function ChangeRequestsPage() {
               This writes the new value to the mandir's profile straight away.
             </p>
           )}
-          <label>
-            {review.mode === 'reject' ? 'Why (the mandir sees this)' : 'Note (optional)'}
+          <label className="field">
+            <span>{review.mode === 'reject' ? 'Why (the mandir sees this)' : 'Note (optional)'}</span>
             <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
           </label>
-          <div className="modal-actions">
-            <button onClick={() => setReview(null)}>Cancel</button>
+          <div className="actions">
+            <button className="btn" onClick={() => setReview(null)}>Cancel</button>
             <button
-              className={review.mode === 'reject' ? 'danger' : 'primary'}
+              className={review.mode === 'reject' ? 'btn danger' : 'btn primary'}
               disabled={saving || (review.mode === 'reject' && !note.trim())}
               onClick={submit}
             >
