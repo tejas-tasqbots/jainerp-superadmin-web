@@ -101,7 +101,9 @@ jobs:
           $COMPOSE pull superadmin-web
 
           # Recreate, retrying once on the transient "No such container" race.
-          up() { $COMPOSE up -d --force-recreate --remove-orphans superadmin-web; }
+          # --no-deps so recreating this service cannot drag its depends_on
+          # peers along from a stale local :latest.
+          up() { $COMPOSE up -d --force-recreate --no-deps --remove-orphans superadmin-web; }
           if ! up; then
             echo "compose up failed - retrying once after 5s..."
             sleep 5
