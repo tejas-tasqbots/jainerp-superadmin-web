@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, formatPaise } from '../api/client';
+import { api, formatPaise, openReceipt } from '../api/client';
 import { ActionForm, ErrorBox, Modal } from '../components/ui';
 
 /**
@@ -97,6 +97,12 @@ export function RegistrationsPage() {
       .catch(setError);
   }, [status, q]);
   useEffect(load, [load]);
+
+  /** Run an action, surfacing any failure in the page's error box. */
+  async function run(fn: () => Promise<void>) {
+    setError(null);
+    try { await fn(); } catch (e) { setError(e); }
+  }
 
   async function act(row: Registration, path: string, body?: unknown) {
     setBusyId(row.id);
@@ -223,11 +229,21 @@ export function RegistrationsPage() {
               </td>
               <td style={{ whiteSpace: 'nowrap' }}>
                 <button className="btn sm" onClick={() => setDetail(r)}>Details</button>{' '}
+                {/* openReceipt(), not a plain <a href>. This endpoint is behind
+                    SuperAdminGuard and a browser NAVIGATION cannot carry an
+                    Authorization header, so a direct link answered
+                    "UNAUTHORIZED: Missing bearer token". openReceipt fetches the
+                    HTML with the token and hands it to a new tab. */}
                 {r.invoice_id && (
                   <>
-                    <a className="btn sm" href={`/api/v1/admin/invoices/${r.invoice_id}/receipt`} target="_blank" rel="noreferrer">
+                    <button
+                      className="btn sm"
+                      onClick={() => run(async () => {
+                        await openReceipt(`/admin/invoices/${r.invoice_id}/receipt?channel=view`);
+                      })}
+                    >
                       Invoice
-                    </a>{' '}
+                    </button>{' '}
                   </>
                 )}
                 {/* Only meaningful before payment — after it the numbers are a
