@@ -490,6 +490,8 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
   const [error, setError] = useState<unknown>(null);
   const [linkUrl, setLinkUrl] = useState<string | null>(null);
   const [mandateLink, setMandateLink] = useState<string | null>(null);
+  /** Invoice being re-priced — only ever an unpaid one. */
+  const [repricing, setRepricing] = useState<Invoice | null>(null);
 
   const load = useCallback(() => {
     api<Invoice[]>(`/admin/tenants/${tenant.id}/invoices`).then((r) => setInvoices(r.data)).catch(setError);
@@ -557,7 +559,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
         <table className="data">
           <thead>
             <tr>
-              <th>Invoice #</th><th>Period</th><th>Subtotal</th><th>GST</th><th>Total</th><th>Status</th><th></th>
+              <th>Invoice #</th><th>Period</th><th>Subtotal</th><th>Discount</th><th>GST</th><th>Total</th><th>Status</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -566,12 +568,24 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                 <td className="mono">{inv.invoiceNumber}</td>
                 <td>{formatDate(inv.periodStart)} → {formatDate(inv.periodEnd)}</td>
                 <td>{formatPaise(inv.subtotalPaise)}</td>
+                <td>{inv.discountPaise ? `− ${formatPaise(inv.discountPaise)}` : <span className="muted">—</span>}</td>
                 <td>{formatPaise(inv.gstAmountPaise)}</td>
                 <td>{formatPaise(inv.totalPaise)}</td>
-                <td><Badge value={inv.status} /></td>
+                <td>
+                  <Badge value={inv.status} />
+                  {inv.receiptNumber && (
+                    <div className="muted mono" style={{ fontSize: 11 }}>{inv.receiptNumber}</div>
+                  )}
+                </td>
                 <td>
                   {inv.status === 'unpaid' && (
                     <>
+                      {/* Change the amount agreed with this mandir while it is
+                          still unpaid. Refused once paid — a paid tax invoice is
+                          corrected by void + reissue, not by an UPDATE. */}
+                      <button className="btn sm" data-testid={`reprice-${inv.invoiceNumber}`} onClick={() => setRepricing(inv)}>
+                        Re-price
+                      </button>{' '}
                       <button className="btn sm" onClick={() => run(async () => {
                         const { data } = await api<{ short_url: string }>(`/admin/tenants/${tenant.id}/payment-link`, {
                           method: 'POST',
@@ -600,11 +614,81 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                 </td>
               </tr>
             ))}
-            {invoices.length === 0 && <tr><td colSpan={7} className="muted">No invoices.</td></tr>}
+            {invoices.length === 0 && <tr><td colSpan={8} className="muted">No invoices.</td></tr>}
           </tbody>
         </table>
+        {/* A link already created for an invoice is kept on the row, so support
+            can resend the exact link that was sent rather than minting a new
+            one each time and leaving two live links for one invoice. */}
+        {invoices.some((i) => i.paymentLinkUrl) && (
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            Existing payment links:{' '}
+            {invoices.filter((i) => i.paymentLinkUrl).map((i) => (
+              <span key={i.id} style={{ marginRight: 12 }}>
+                {i.invoiceNumber}: <a href={i.paymentLinkUrl!} target="_blank" rel="noreferrer">{i.paymentLinkUrl}</a>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
+
+      {repricing && (
+        <Modal title={`Re-price ${repricing.invoiceNumber}`} onClose={() => setRepricing(null)}>
+          <RepriceInvoiceForm
+            invoice={repricing}
+            onDone={() => { setRepricing(null); setLinkUrl(null); load(); onChanged('Invoice re-priced'); }}
+          />
+        </Modal>
+      )}
     </div>
+  );
+}
+
+/**
+ * Re-price an unpaid invoice: the "we agreed a different amount with this
+ * mandir and they have not paid yet" case. Amounts are entered in rupees and
+ * converted here — the API only accepts paise.
+ */
+function RepriceInvoiceForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
+  const [f, setF] = useState({
+    subtotal: String(invoice.subtotalPaise / 100),
+    discount: String((invoice.discountPaise ?? 0) / 100),
+    charges: String((invoice.additionalChargesPaise ?? 0) / 100),
+    discount_note: invoice.discountNote ?? '',
+    note: '',
+  });
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setF({ ...f, [k]: e.target.value });
+
+  return (
+    <ActionForm
+      submitLabel="Save price"
+      onDone={onDone}
+      onSubmit={async () => {
+        await api(`/admin/invoices/${invoice.id}`, {
+          method: 'PATCH',
+          body: {
+            subtotal_paise: Math.round(Number(f.subtotal || 0) * 100),
+            discount_paise: Math.round(Number(f.discount || 0) * 100),
+            additional_charges_paise: Math.round(Number(f.charges || 0) * 100),
+            discount_note: f.discount_note || undefined,
+            note: f.note || undefined,
+          },
+        });
+      }}
+    >
+      <p className="muted" style={{ marginTop: 0 }}>
+        GST is recalculated on the net (subtotal − discount + charges). Any payment link already sent quotes the
+        old figure, so it is cleared — create a new one afterwards.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label className="field"><span>Subtotal (₹)</span><input type="number" value={f.subtotal} onChange={set('subtotal')} /></label>
+        <label className="field"><span>Discount (₹)</span><input type="number" value={f.discount} onChange={set('discount')} /></label>
+        <label className="field"><span>Additional charges (₹)</span><input type="number" value={f.charges} onChange={set('charges')} /></label>
+        <label className="field"><span>Discount label (on the invoice)</span><input value={f.discount_note} onChange={set('discount_note')} /></label>
+      </div>
+      <label className="field"><span>Internal note</span><input value={f.note} onChange={set('note')} /></label>
+    </ActionForm>
   );
 }
 

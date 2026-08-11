@@ -16,6 +16,20 @@ interface Plan {
   features?: Record<string, unknown>;
   is_active: boolean;
   sort_order: number;
+  // ---- public catalogue + provisioning (migration 038) ----
+  description: string | null;
+  /** Storage tier a purchase provisions. Enterprise = dedicated. */
+  tenancy_tier: 'pooled' | 'dedicated';
+  /** Published on jainerp.org + the self-serve registration plan picker. */
+  is_public: boolean;
+  /** Quote-only: raises a custom request instead of taking payment. */
+  is_custom: boolean;
+  highlight: boolean;
+  badge: string | null;
+  /** Per-plan GST override; null = the platform default (18%). */
+  gst_rate: number | null;
+  trial_days: number;
+  highlights: string[];
   /** Live temples on this plan (soft-deleted excluded) — set by the API. */
   tenant_count: number;
   /** How many of those additionally carry a per-tenant custom override. */
@@ -47,6 +61,9 @@ export function PlansPage() {
         <p className="muted" style={{ margin: 0 }}>
           Define the plans mandirs can subscribe to. Prices are what temples pay; limits gate their usage.
           A single mandir can be given bespoke pricing without a new plan — see <b>Set custom plan</b> on its detail page.
+          <br />
+          <b>Published</b> plans appear on jainerp.org and in the self-serve registration wizard with these exact
+          prices, modules and limits — no deploy is needed to change them.
         </p>
         <div className="grow" />
         <button className="btn primary" onClick={() => setShowCreate(true)}>+ New Plan</button>
@@ -54,7 +71,7 @@ export function PlansPage() {
 
       <table className="data">
         <thead>
-          <tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Users</th><th>Receipts/mo</th><th>SMS/mo</th><th>Mandirs</th><th>Active</th><th></th></tr>
+          <tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Database</th><th>Users</th><th>Receipts/mo</th><th>Mandirs</th><th>Status</th><th></th></tr>
         </thead>
         <tbody>
           {rows.map((p) => (
@@ -63,16 +80,24 @@ export function PlansPage() {
               {/* formatPaise already prefixes ₹ — adding another gave "₹₹999". */}
               <td>{p.price_monthly_paise > 0 ? formatPaise(p.price_monthly_paise) : 'Free'}</td>
               <td>{p.price_yearly_paise > 0 ? formatPaise(p.price_yearly_paise) : 'Free'}</td>
+              <td>
+                {p.tenancy_tier === 'dedicated'
+                  ? <span className="badge">Dedicated</span>
+                  : <span className="muted">Pooled</span>}
+              </td>
               <td>{limit(p.max_users)}</td>
               <td>{limit(p.max_receipts_per_month)}</td>
-              <td>{limit(p.max_sms_per_month)}</td>
               <td data-testid={`plan-usage-${p.name}`}>
                 {p.tenant_count}
                 {p.custom_override_count > 0 && (
                   <div className="muted" style={{ fontSize: 11 }}>{p.custom_override_count} custom</div>
                 )}
               </td>
-              <td>{p.is_active ? <span className="badge green">Active</span> : <span className="badge">Archived</span>}</td>
+              <td>
+                {p.is_active ? <span className="badge green">Active</span> : <span className="badge">Archived</span>}
+                {p.is_public && <div><span className="badge blue" data-testid={`plan-public-${p.name}`}>Published</span></div>}
+                {p.is_custom && <div><span className="badge">Quote only</span></div>}
+              </td>
               <td>
                 <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>{' '}
                 {/* A plan in use can only be archived — deleting it would orphan
@@ -124,9 +149,28 @@ function PlanForm({ plan, onDone }: { plan?: Plan; onDone: () => void }) {
     max_storage_mb: String(plan?.max_storage_mb ?? 500),
     sort_order: String(plan?.sort_order ?? 0),
     is_active: plan?.is_active ?? true,
+    description: plan?.description ?? '',
+    tenancy_tier: plan?.tenancy_tier ?? 'pooled',
+    is_public: plan?.is_public ?? false,
+    is_custom: plan?.is_custom ?? false,
+    highlight: plan?.highlight ?? false,
+    badge: plan?.badge ?? '',
+    // Blank means "no override" — the platform's 18% applies.
+    gst_rate: plan?.gst_rate == null ? '' : String(plan.gst_rate),
+    trial_days: String(plan?.trial_days ?? 0),
+    highlights: (plan?.highlights ?? []).join('\n'),
+    modules: (((plan?.features as { modules?: string[] } | undefined)?.modules) ?? []).join(', '),
   });
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm({ ...form, [k]: k === 'is_active' ? e.target.checked : e.target.value });
+  const BOOLS = ['is_active', 'is_public', 'is_custom', 'highlight'] as const;
+  const set =
+    (k: keyof typeof form) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+      setForm({
+        ...form,
+        [k]: (BOOLS as readonly string[]).includes(k)
+          ? (e.target as HTMLInputElement).checked
+          : e.target.value,
+      });
 
   return (
     <ActionForm
@@ -144,6 +188,23 @@ function PlanForm({ plan, onDone }: { plan?: Plan; onDone: () => void }) {
           max_sms_per_month: Number(form.max_sms_per_month),
           max_storage_mb: Number(form.max_storage_mb),
           sort_order: Number(form.sort_order),
+          description: form.description || undefined,
+          tenancy_tier: form.tenancy_tier as 'pooled' | 'dedicated',
+          is_public: form.is_public,
+          is_custom: form.is_custom,
+          highlight: form.highlight,
+          badge: form.badge || undefined,
+          // '' clears the override back to the platform rate; 0 is a real
+          // (zero-rated) choice, so they must not collapse to the same value.
+          gst_rate: form.gst_rate === '' ? null : Number(form.gst_rate),
+          trial_days: Number(form.trial_days || 0),
+          highlights: form.highlights.split('\n').map((h) => h.trim()).filter(Boolean),
+          // features.modules is what actually grants a module to every tenant
+          // on this plan — resolveModules() unions it with per-tenant grants.
+          features: {
+            ...(plan?.features ?? {}),
+            modules: form.modules.split(',').map((m) => m.trim()).filter(Boolean),
+          },
           ...(plan && { is_active: form.is_active }),
         };
         if (plan) await api(`/admin/plans/${plan.id}`, { method: 'PATCH', body });
@@ -166,11 +227,59 @@ function PlanForm({ plan, onDone }: { plan?: Plan; onDone: () => void }) {
         <label className="field"><span>Storage (MB)</span><input type="number" value={form.max_storage_mb} onChange={set('max_storage_mb')} /></label>
         <label className="field"><span>Sort order</span><input type="number" value={form.sort_order} onChange={set('sort_order')} /></label>
       </div>
-      {plan && (
-        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <input type="checkbox" checked={form.is_active} onChange={set('is_active')} /> <span>Active</span>
+      <label className="field"><span>Description (shown on the public plan card)</span>
+        <textarea rows={2} value={form.description} onChange={set('description')} />
+      </label>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label className="field"><span>Database tier</span>
+          <select value={form.tenancy_tier} onChange={set('tenancy_tier')}>
+            <option value="pooled">Pooled (shared database)</option>
+            <option value="dedicated">Dedicated (own database)</option>
+          </select>
         </label>
-      )}
+        <label className="field"><span>GST % (blank = platform default 18%)</span>
+          <input type="number" step="0.01" value={form.gst_rate} onChange={set('gst_rate')} />
+        </label>
+        <label className="field"><span>Badge (e.g. "Most popular")</span>
+          <input value={form.badge} onChange={set('badge')} />
+        </label>
+        <label className="field"><span>Trial days</span>
+          <input type="number" value={form.trial_days} onChange={set('trial_days')} />
+        </label>
+      </div>
+
+      <label className="field">
+        <span>Modules included (comma-separated keys, e.g. dharamshala, gaushala)</span>
+        <input value={form.modules} onChange={set('modules')} />
+      </label>
+      <p className="muted" style={{ fontSize: 11, marginTop: -6 }}>
+        Core modules (donations, donors, accounting, reports, settings, users, expenses, registers, masters,
+        dashboard) are always granted and must not be listed. Leave blank for a plan with no optional modules.
+      </p>
+
+      <label className="field"><span>Selling points (one per line)</span>
+        <textarea rows={4} value={form.highlights} onChange={set('highlights')} />
+      </label>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={form.is_public} onChange={set('is_public')} data-testid="plan-is-public" />
+          <span>Publish (show on the website + registration)</span>
+        </label>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={form.highlight} onChange={set('highlight')} /> <span>Highlight</span>
+        </label>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={form.is_custom} onChange={set('is_custom')} />
+          <span>Quote only (no online payment)</span>
+        </label>
+        {plan && (
+          <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={form.is_active} onChange={set('is_active')} /> <span>Active</span>
+          </label>
+        )}
+      </div>
     </ActionForm>
   );
 }

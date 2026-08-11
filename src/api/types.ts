@@ -170,6 +170,13 @@ export interface TenantDetail {
   created_at: string;
 }
 
+/**
+ * A platform subscription invoice.
+ *
+ * camelCase because this list endpoint returns TypeORM entities directly,
+ * unlike the snake_case admin endpoints — the field names here must match
+ * BillingInvoice's property names, not its column names.
+ */
 export interface Invoice {
   id: string;
   tenantId: string;
@@ -181,6 +188,20 @@ export interface Invoice {
   totalPaise: number;
   status: string;
   paidAt: string | null;
+  // ---- migration 038 ----
+  discountPaise: number;
+  additionalChargesPaise: number;
+  discountNote: string | null;
+  currency: string;
+  /** Money-received acknowledgement; null while unpaid. */
+  receiptNumber: string | null;
+  paymentMethod: string | null;
+  paymentRef: string | null;
+  razorpayOrderId: string | null;
+  razorpayPaymentId: string | null;
+  /** The exact Payment Link last sent for this invoice, so it can be resent. */
+  paymentLinkUrl: string | null;
+  paymentLinkExpiresAt: string | null;
 }
 
 export interface License {

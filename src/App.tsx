@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Landmark, Users, Sparkles, Package, Settings as SettingsIcon, ShieldCheck, Compass, LogOut } from 'lucide-react';
+import { LayoutDashboard, Landmark, Users, Sparkles, Package, Settings as SettingsIcon, ShieldCheck, Compass, LogOut, UserPlus, MessageSquareQuote } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
@@ -7,6 +7,8 @@ import { LoginPage } from './pages/LoginPage';
 import { MaharajPage } from './pages/MaharajPage';
 import { ChangeRequestsPage } from './pages/ChangeRequestsPage';
 import { PlansPage } from './pages/PlansPage';
+import { RegistrationsPage } from './pages/RegistrationsPage';
+import { CustomRequestsPage } from './pages/CustomRequestsPage';
 import { SectReadinessPage } from './pages/SectReadinessPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -19,6 +21,8 @@ const navItems = [
   { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
   { to: '/maharaj', label: 'Sadhu-Sadhvi', icon: <Sparkles size={18} /> },
   { to: '/change-requests', label: 'Change Requests', icon: <ShieldCheck size={18} /> },
+  { to: '/registrations', label: 'Registrations', icon: <UserPlus size={18} /> },
+  { to: '/custom-requests', label: 'Custom Requests', icon: <MessageSquareQuote size={18} /> },
   { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
   { to: '/sect-readiness', label: 'Sampradaya', icon: <Compass size={18} /> },
   { to: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
@@ -66,6 +70,8 @@ function Layout() {
           <Route path="/devotees" element={<DevoteesPage />} />
           <Route path="/maharaj" element={<MaharajPage />} />
           <Route path="/change-requests" element={<ChangeRequestsPage />} />
+          <Route path="/registrations" element={<RegistrationsPage />} />
+          <Route path="/custom-requests" element={<CustomRequestsPage />} />
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/sect-readiness" element={<SectReadinessPage />} />
           <Route path="/settings" element={<SettingsPage />} />
