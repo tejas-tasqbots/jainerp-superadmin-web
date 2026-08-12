@@ -5,6 +5,7 @@ import { PhoneInput } from '../components/PhoneInput';
 import type { BillingHistory, Invoice, License, LifecycleEvent, TenantDetail } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal } from '../components/ui';
 import { ModulePicker } from '../components/ModulePicker';
+import { AccountingBasisCard } from './AccountingBasisCard';
 
 const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
 const TIERS = ['pooled', 'dedicated'];
@@ -173,6 +174,8 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
           )}
         </div>
       </div>
+
+      <AccountingBasisCard tenantId={tenant.id} />
 
       <div className="card">
         <h2>Actions</h2>
