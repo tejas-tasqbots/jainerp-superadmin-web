@@ -34,7 +34,16 @@ interface DonationAccount {
   verified_at: string | null;
   changed_since_verification: boolean;
   verify_note: string | null;
+  has_proof: boolean;
+  proof_kind: string | null;
+  proof_uploaded_at: string | null;
 }
+
+const PROOF_LABEL: Record<string, string> = {
+  passbook: 'Passbook first page',
+  statement: 'Statement first page',
+  cheque: 'Cancelled cheque',
+};
 
 export function DonationAccountsPage() {
   const [rows, setRows] = useState<DonationAccount[]>([]);
@@ -43,6 +52,34 @@ export function DonationAccountsPage() {
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState<{ row: DonationAccount; mode: 'verify' | 'reject' } | null>(null);
   const [note, setNote] = useState('');
+  const [proof, setProof] = useState<{ src: string; kind: string | null } | null>(null);
+  const [proofBusy, setProofBusy] = useState(false);
+
+  /**
+   * The document is fetched only when a review is opened, never with the list.
+   * Fifty trusts in the queue would otherwise mean fifty base64 images down the
+   * wire to draw fifty table rows, and the reviewer looks at one at a time.
+   */
+  const openReview = useCallback(async (row: DonationAccount, mode: 'verify' | 'reject') => {
+    setReview({ row, mode });
+    setNote('');
+    setProof(null);
+    if (!row.has_proof) return;
+    setProofBusy(true);
+    try {
+      const r = await api<{ data: string; mime: string; kind: string | null }>(
+        `/admin/tenants/${row.tenant_id}/donation-account/proof`,
+      );
+      const p = r.data;
+      if (p) setProof({ src: `data:${p.mime};base64,${p.data}`, kind: p.kind });
+    } catch {
+      // A missing image must not block a withdrawal, which is the action a
+      // reviewer takes precisely when something is wrong with the account.
+      setProof(null);
+    } finally {
+      setProofBusy(false);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -110,6 +147,7 @@ export function DonationAccountsPage() {
             <th>Bank</th>
             <th>Account number</th>
             <th>IFSC</th>
+            <th>Proof</th>
             <th>State</th>
             <th />
           </tr>
@@ -117,7 +155,7 @@ export function DonationAccountsPage() {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={7} className="muted">
+              <td colSpan={8} className="muted">
                 {status === 'pending'
                   ? 'Nothing waiting. Every nominated account has been verified.'
                   : 'No accounts to show.'}
@@ -134,7 +172,14 @@ export function DonationAccountsPage() {
               <td>{r.account_name}</td>
               <td>{r.bank_name ?? '—'}</td>
               <td className="mono">{r.account_no ?? '—'}</td>
-              <td className="mono">{r.ifsc ?? '—'}</td>
+              {/* The reviewer's first question is "is there anything to check
+                  this against?" — answering it in the row means they do not
+                  open a review only to find an empty modal. */}
+              <td>
+                {r.has_proof
+                  ? <span className="small">{PROOF_LABEL[r.proof_kind ?? ''] ?? 'Uploaded'}</span>
+                  : <span className="muted small">not uploaded</span>}
+              </td>
               <td>
                 {r.changed_since_verification ? (
                   <Badge value="edited after approval" />
@@ -147,12 +192,21 @@ export function DonationAccountsPage() {
               </td>
               <td>
                 {!r.is_verified && (
-                  <button className="btn btn-primary btn-sm" onClick={() => { setReview({ row: r, mode: 'verify' }); setNote(''); }}>
-                    Verify
+                  <button
+                    className="btn btn-primary btn-sm"
+                    // Disabled AND refused by the API: without the document
+                    // there is nothing to check the digits against, and an
+                    // approval on typed digits alone is the failure this queue
+                    // exists to prevent.
+                    disabled={!r.has_proof}
+                    title={r.has_proof ? '' : 'The trust has not uploaded a passbook or statement page yet'}
+                    onClick={() => void openReview(r, 'verify')}
+                  >
+                    Review &amp; verify
                   </button>
                 )}
                 {r.is_verified && (
-                  <button className="btn btn-danger btn-sm" onClick={() => { setReview({ row: r, mode: 'reject' }); setNote(''); }}>
+                  <button className="btn btn-danger btn-sm" onClick={() => void openReview(r, 'reject')}>
                     Withdraw
                   </button>
                 )}
@@ -170,10 +224,62 @@ export function DonationAccountsPage() {
           <p>
             <strong>{review.row.tenant_name}</strong>
           </p>
-          <p className="mono">
-            {review.row.account_name} · {review.row.bank_name ?? '—'} · {review.row.account_no ?? '—'} ·{' '}
-            {review.row.ifsc ?? '—'}
-          </p>
+
+          {/* What the trust typed, laid out field by field rather than as one
+              run-on line — the reviewer is comparing these against the image
+              below, value by value, and a comma-separated string makes that
+              needlessly hard. */}
+          {/* A two-column grid rather than the page's `table` class, which is
+              tuned for full-width lists and packs the label hard against the
+              value at modal width — exactly where these have to be read
+              carefully, one line at a time, against the image below. */}
+          <dl
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'max-content 1fr',
+              columnGap: 16,
+              rowGap: 6,
+              margin: '12px 0',
+            }}
+          >
+            <dt className="muted">Account holder</dt>
+            <dd style={{ margin: 0 }}><strong>{review.row.account_name}</strong></dd>
+            <dt className="muted">Bank</dt>
+            <dd style={{ margin: 0 }}>{review.row.bank_name ?? '—'}</dd>
+            <dt className="muted">Account number</dt>
+            <dd className="mono" style={{ margin: 0 }}>{review.row.account_no ?? '—'}</dd>
+            <dt className="muted">IFSC</dt>
+            <dd className="mono" style={{ margin: 0 }}>{review.row.ifsc ?? '—'}</dd>
+          </dl>
+
+          {/* The document. This is the only independent evidence in the whole
+              flow — everything above was typed by the trust itself. */}
+          {review.row.has_proof ? (
+            <div>
+              <p className="muted small">
+                {PROOF_LABEL[review.row.proof_kind ?? ''] ?? 'Uploaded document'}
+                {review.row.proof_uploaded_at ? ` · uploaded ${formatDate(review.row.proof_uploaded_at)}` : ''}
+                {' — check the holder name, account number and IFSC above appear on it.'}
+              </p>
+              {proofBusy && <p className="muted">Loading the document…</p>}
+              {proof && (
+                <a href={proof.src} target="_blank" rel="noreferrer" title="Open full size in a new tab">
+                  <img
+                    src={proof.src}
+                    alt="Passbook or statement page uploaded by the trust"
+                    style={{ maxWidth: '100%', maxHeight: 420, border: '1px solid var(--border, #ddd)', borderRadius: 8 }}
+                  />
+                </a>
+              )}
+              {!proofBusy && !proof && <p className="muted">The document could not be loaded.</p>}
+            </div>
+          ) : (
+            <p className="muted">
+              No passbook or statement page has been uploaded, so there is nothing to check these
+              details against.
+            </p>
+          )}
+
           <p className="muted small">
             {review.mode === 'verify'
               ? 'Devotees will be shown these details. Approving records these exact digits — if the trust edits the account afterwards it returns here automatically.'
@@ -192,7 +298,11 @@ export function DonationAccountsPage() {
             <button className="btn" onClick={() => setReview(null)}>Cancel</button>
             <button
               className={review.mode === 'verify' ? 'btn btn-primary' : 'btn btn-danger'}
-              disabled={busy || (review.mode === 'reject' && !note.trim())}
+              disabled={
+                busy ||
+                (review.mode === 'reject' && !note.trim()) ||
+                (review.mode === 'verify' && !review.row.has_proof)
+              }
               onClick={submit}
             >
               {review.mode === 'verify' ? 'Verify' : 'Withdraw'}
