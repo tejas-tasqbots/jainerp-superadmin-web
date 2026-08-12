@@ -133,5 +133,22 @@ jobs:
             *:"$TAG") echo "deploy healthy, serving $TAG." ;;
             *) echo "::error::jainerp-superadmin-web is serving $running, expected tag $TAG"; exit 1 ;;
           esac
+
+          # PERSIST THE TAG, so nothing can silently roll this service back.
+          #
+          # The export above only exists in this shell. docker-compose.aws.yml reads
+          # ${SUPERADMIN_WEB_TAG:-latest}, so ANY later compose invocation that does not set it
+          # — another repo deploying, a manual `up -d`, a reboot bringing the stack
+          # up — re-resolves this service to :latest and recreates the container from
+          # a stale local image. On 2026-08-12 that put all four APIs back on a
+          # 7-day-old build while their correct images sat unused on the box, and the
+          # deploys had all reported success because each one WAS correct at the time.
+          #
+          # Writing it into .env.aws (which every compose command here already loads)
+          # makes the pin durable and survives a reboot.
+          touch .env.aws
+          sed -i "/^SUPERADMIN_WEB_TAG=/d" .env.aws
+          echo "SUPERADMIN_WEB_TAG=$TAG" >> .env.aws
+          echo "pinned SUPERADMIN_WEB_TAG=$TAG in .env.aws"
           REMOTE
           rm -f /tmp/deploy_key
