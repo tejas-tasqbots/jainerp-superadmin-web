@@ -4,8 +4,8 @@ import { api } from '../api/client';
 import { ErrorBox } from '../components/ui';
 
 interface Readiness {
-  enforced: boolean;
-  ready_to_enforce: boolean;
+  /** The live scoping model. Only 'discovery_default' exists today. */
+  scoping: string;
   outstanding: number;
   temples: {
     applicable: number;
@@ -18,13 +18,13 @@ interface Readiness {
 }
 
 /**
- * The "sect not set" report — the gate for turning sect filtering on.
+ * The "sect not set" report — what tradition scoping is still missing.
  *
- * Sect scoping cannot be enabled until this reaches zero. Everything starts
- * NULL (migration 032), so flipping the flag early would empty the devotee app:
- * no temple would match any devotee. This page exists so that decision is made
- * against real numbers rather than a guess, and so the backfill has somewhere
- * obvious to happen.
+ * Scoping is live in the devotee app: every discovery list leads with the
+ * devotee's own sampradaya and offers "All traditions" beside it. A missing
+ * sect never hides anything — the unknown side is always shown — so this is a
+ * data-quality report, not a release gate. Each row is a temple turning up in
+ * searches it may not belong in, or a devotee getting no personalisation.
  */
 export function SectReadinessPage() {
   const [data, setData] = useState<Readiness | null>(null);
@@ -82,27 +82,17 @@ export function SectReadinessPage() {
       <h1>Sampradaya readiness</h1>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        {data.enforced ? (
-          <>
-            <strong>Sect filtering is ON.</strong> Devotees see only their own tradition.
-            {data.outstanding > 0 && (
-              <> {data.outstanding} record(s) still have no sampradaya — those stay visible to
-              everyone, which is the intended safe behaviour, but they are not being segregated.</>
-            )}
-          </>
-        ) : data.ready_to_enforce ? (
-          <>
-            <strong>Ready to enable.</strong> Every temple, devotee and sant has a sampradaya
-            recorded. Set <code>SECT_FILTER_ENFORCED=true</code> on superadmin-api and
-            devotee-api to turn segregation on. Keep it as config for a release so it can be
-            rolled back without a deploy.
-          </>
+        <strong>Tradition scoping is live.</strong> A devotee's temple directory, sant list and
+        stay search lead with their own sampradaya, with "All traditions" one tap away. Donations
+        and room bookings are never refused across traditions.
+        {data.outstanding > 0 ? (
+          <> {data.outstanding} record(s) still have no sampradaya. Nothing is hidden for it —
+          an unknown sect is shown to everyone — but a temple with no sampradaya appears in both
+          traditions' searches, and a devotee with none gets no personalisation at all. Backfill
+          below.</>
         ) : (
-          <>
-            <strong>Not ready — {data.outstanding} record(s) have no sampradaya.</strong>{' '}
-            Enabling the filter now would hide nothing (unknown always stays visible), but the
-            segregation would be incomplete. Backfill these first.
-          </>
+          <> Every temple, devotee and sant has a sampradaya recorded, so every list is scoped as
+          precisely as it can be.</>
         )}
       </div>
 
