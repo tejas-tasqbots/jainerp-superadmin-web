@@ -68,7 +68,7 @@ export function AccountingBasisCard({ tenantId }: { tenantId: string }) {
         {(['cash', 'accrual'] as const).map((b) => (
           <button
             key={b}
-            className={state.accounting_basis === b ? 'btn btn-primary' : 'btn'}
+            className={state.accounting_basis === b ? 'btn primary' : 'btn'}
             disabled={saving || state.accounting_basis === b}
             onClick={() => setConfirming(b)}
           >
@@ -88,7 +88,7 @@ export function AccountingBasisCard({ tenantId }: { tenantId: string }) {
           </p>
           <div className="toolbar">
             <button className="btn" onClick={() => setConfirming(null)}>Cancel</button>
-            <button className="btn btn-danger" disabled={saving} onClick={() => apply(confirming)}>
+            <button className="btn danger" disabled={saving} onClick={() => apply(confirming)}>
               Yes, switch to {confirming}
             </button>
           </div>

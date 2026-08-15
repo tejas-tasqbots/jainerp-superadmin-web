@@ -199,6 +199,16 @@
      back to bare `.badge` and rendered colourless, losing the whole signal. */
   .badge.green { background: var(--color-brand-green-light); color: var(--color-brand-green-dark); }
   .badge.red   { background: var(--color-brand-red-light);   color: var(--color-brand-red-dark); }
+  /* `blue` is the neutral-but-noteworthy state (a NEW custom request). Without
+     it the pill fell through to bare `.badge` and a new request looked identical
+     to a closed one. */
+  .badge.blue  { background: var(--color-brand-blue-light, #e8f0fe); color: var(--color-brand-blue-dark, #1a3d7c); }
+
+  /* Secondary line inside a table cell — a slug under a name, a note under a
+     status pill. Paired with `.muted` at every call site; it was never defined,
+     so those lines rendered at full body size and competed with the value above
+     them. */
+  .small { font-size: 12px; line-height: 1.35; }
 
   /* ── Modal ──────────────────────────────────────────────────────────────── */
   .modal-overlay {

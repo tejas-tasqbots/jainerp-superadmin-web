@@ -124,11 +124,11 @@ export function DonationAccountsPage() {
         approving records these exact digits, so a later edit brings it straight back to this queue.
       </p>
       <div>
-        <div className="filters">
+        <div className="toolbar">
           {(['pending', 'verified', 'all'] as const).map(s => (
             <button
               key={s}
-              className={status === s ? 'chip chip-on' : 'chip'}
+              className={status === s ? 'chip chip-active' : 'chip'}
               onClick={() => setStatus(s)}
             >
               {s === 'pending' ? `Needs review${pending ? ` (${pending})` : ''}` : s === 'verified' ? 'Verified' : 'All'}
@@ -172,6 +172,12 @@ export function DonationAccountsPage() {
               <td>{r.account_name}</td>
               <td>{r.bank_name ?? '—'}</td>
               <td className="mono">{r.account_no ?? '—'}</td>
+              {/* IFSC. Its cell was missing while the header was not, so every
+                  cell after it rendered one column to the left: "not uploaded"
+                  sat under IFSC, the state badge under Proof, and the button
+                  under State. Nothing was wrong with the data — the table was
+                  reading a column short. */}
+              <td className="mono">{r.ifsc ?? '—'}</td>
               {/* The reviewer's first question is "is there anything to check
                   this against?" — answering it in the row means they do not
                   open a review only to find an empty modal. */}
@@ -192,21 +198,30 @@ export function DonationAccountsPage() {
               </td>
               <td>
                 {!r.is_verified && (
-                  <button
-                    className="btn btn-primary btn-sm"
-                    // Disabled AND refused by the API: without the document
-                    // there is nothing to check the digits against, and an
-                    // approval on typed digits alone is the failure this queue
-                    // exists to prevent.
-                    disabled={!r.has_proof}
-                    title={r.has_proof ? '' : 'The trust has not uploaded a passbook or statement page yet'}
-                    onClick={() => void openReview(r, 'verify')}
-                  >
-                    Review &amp; verify
-                  </button>
+                  // Opening the review is always allowed; APPROVING without the
+                  // document is not — the modal's Verify button stays disabled
+                  // and the API refuses it too, because an approval on typed
+                  // digits alone is the failure this queue exists to prevent.
+                  //
+                  // The button used to be disabled outright, which read as a
+                  // broken page: a greyed "Review & verify" with the reason
+                  // hidden in a `title` tooltip nobody hovers. A reviewer who
+                  // cannot approve can still usefully look at what the trust
+                  // typed, so let them, and say why it stops there.
+                  <>
+                    <button
+                      className={r.has_proof ? 'btn primary sm' : 'btn sm'}
+                      onClick={() => void openReview(r, 'verify')}
+                    >
+                      {r.has_proof ? 'Review & verify' : 'Review'}
+                    </button>
+                    {!r.has_proof && (
+                      <div className="muted small">Waiting on a passbook or statement page</div>
+                    )}
+                  </>
                 )}
                 {r.is_verified && (
-                  <button className="btn btn-danger btn-sm" onClick={() => void openReview(r, 'reject')}>
+                  <button className="btn danger sm" onClick={() => void openReview(r, 'reject')}>
                     Withdraw
                   </button>
                 )}
@@ -276,7 +291,8 @@ export function DonationAccountsPage() {
           ) : (
             <p className="muted">
               No passbook or statement page has been uploaded, so there is nothing to check these
-              details against.
+              details against. Verification stays blocked until the trust uploads one — ask them to
+              add it under Settings → Donor Payments.
             </p>
           )}
 
@@ -294,10 +310,10 @@ export function DonationAccountsPage() {
               placeholder={review.mode === 'verify' ? 'Cancelled cheque checked' : 'IFSC does not match the cheque'}
             />
           </label>
-          <div className="modal-actions">
+          <div className="actions">
             <button className="btn" onClick={() => setReview(null)}>Cancel</button>
             <button
-              className={review.mode === 'verify' ? 'btn btn-primary' : 'btn btn-danger'}
+              className={review.mode === 'verify' ? 'btn primary' : 'btn danger'}
               disabled={
                 busy ||
                 (review.mode === 'reject' && !note.trim()) ||
