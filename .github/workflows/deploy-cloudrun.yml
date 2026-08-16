@@ -25,18 +25,6 @@ on:
         description: "Cloud Run service name, e.g. mandir-api. Matches the compose service name."
         required: true
         type: string
-      image_repo:
-        description: "Artifact Registry base, e.g. asia-south1-docker.pkg.dev/tsq-artifacts/jainerp. From the 20-shared output image_repo_base."
-        required: true
-        type: string
-      wif_provider:
-        description: "Full WIF provider resource name. From the 20-shared output wif_provider_name."
-        required: true
-        type: string
-      deploy_sa:
-        description: "Deploy service account email for THIS repo. From the 20-shared output deployer_service_accounts."
-        required: true
-        type: string
       project_id:
         description: "Target project."
         required: false
@@ -64,25 +52,38 @@ on:
         required: false
         type: string
         default: jainerp-db-bootstrap
-      verify_url:
-        description: >-
-          Public URL to curl AFTER traffic is shifted, e.g.
-          https://prod-app.jainerp.org/api/v1/health . Leave empty to skip.
-          It must go through the load balancer - see the note on run.app below.
-        required: false
-        type: string
-        default: ""
       revision_ready_timeout:
         description: "Seconds to wait for the new revision to report Ready."
         required: false
         type: number
         default: 300
 
+    secrets:
+      # Passed as SECRETS rather than inputs because that is where they are
+      # stored in GitHub. A reusable workflow's `with:` block cannot see the
+      # secrets context at all - GitHub rejects the file with
+      # "Unrecognized named-value: 'secrets'" - so a `secrets:` block is the
+      # only way to feed them from Secrets rather than Variables.
+      #
+      # Consequence: GitHub MASKS these in logs. The image path and the deploy
+      # service account print as *** everywhere, including in failures. If a
+      # broken push or auth call ever needs to be read, move all four to the
+      # Variables tab and turn them back into inputs.
+      GCP_IMAGE_REPO:
+        required: true
+      GCP_WIF_PROVIDER:
+        required: true
+      GCP_DEPLOY_SA:
+        required: true
+      PROD_VERIFY_URL:
+        required: false
+
 concurrency:
   # Per service, not per repo: two tags pushed in quick succession must not
   # race each other through the traffic shift.
   group: deploy-prod-${{ inputs.service }}
   cancel-in-progress: false
+
 
 jobs:
   deploy:
@@ -104,9 +105,9 @@ jobs:
     steps:
       - name: Check the caller passed everything
         env:
-          IMAGE_REPO: ${{ inputs.image_repo }}
-          WIF_PROVIDER: ${{ inputs.wif_provider }}
-          DEPLOY_SA: ${{ inputs.deploy_sa }}
+          IMAGE_REPO: ${{ secrets.GCP_IMAGE_REPO }}
+          WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+          DEPLOY_SA: ${{ secrets.GCP_DEPLOY_SA }}
         run: |
           set -euo pipefail
           missing=0
@@ -124,8 +125,8 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ inputs.wif_provider }}
-          service_account: ${{ inputs.deploy_sa }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -135,7 +136,7 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: |
           set -euo pipefail
-          host="$(echo "${{ inputs.image_repo }}" | cut -d/ -f1)"
+          host="$(echo "${{ secrets.GCP_IMAGE_REPO }}" | cut -d/ -f1)"
           gcloud auth configure-docker "$host" --quiet
 
       # ---------------------------------------------------------------------
@@ -152,7 +153,7 @@ jobs:
       - name: Resolve or build the image
         id: image
         env:
-          IMAGE: ${{ inputs.image_repo }}/${{ inputs.service }}
+          IMAGE: ${{ secrets.GCP_IMAGE_REPO }}/${{ inputs.service }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -328,9 +329,9 @@ jobs:
             --quiet
 
       - name: Verify through the load balancer
-        if: ${{ inputs.verify_url != '' }}
+        if: ${{ secrets.PROD_VERIFY_URL != '' }}
         env:
-          URL: ${{ inputs.verify_url }}
+          URL: ${{ secrets.PROD_VERIFY_URL }}
         run: |
           set -euo pipefail
           for i in $(seq 1 20); do

@@ -62,10 +62,9 @@ jobs:
     with:
       service: superadmin-web
       run_migrations: false
-      image_repo: ${{ vars.GCP_IMAGE_REPO }}
-      wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
-      deploy_sa: ${{ vars.GCP_DEPLOY_SA }}
       # Empty until the temporary prod-*.jainerp.org names exist (§4 of
       # PROD_GCP_SETUP_PROMPT.md). Empty means the post-shift check is skipped,
       # not that it silently passes.
-      verify_url: ${{ vars.PROD_VERIFY_URL }}
+    # Hands the repo/org secrets to the reusable workflow. `inherit` rather
+    # than naming each one, so adding a secret later needs no edit here.
+    secrets: inherit
