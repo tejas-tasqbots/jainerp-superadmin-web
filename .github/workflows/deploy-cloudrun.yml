@@ -49,9 +49,14 @@ on:
         type: boolean
         default: false
       migration_job:
+        # MUST match the Cloud Run Job that 50-prod actually creates, which is
+        # named `db-bootstrap` (google_cloud_run_v2_job.db_bootstrap in
+        # gcp/envs/50-prod/run.tf). The old default `jainerp-db-bootstrap` did
+        # not exist, so the migration step would have looked for a job that was
+        # never there. Corrected 2026-08-17 against `gcloud run jobs list`.
         required: false
         type: string
-        default: jainerp-db-bootstrap
+        default: db-bootstrap
       revision_ready_timeout:
         description: "Seconds to wait for the new revision to report Ready."
         required: false
@@ -101,6 +106,25 @@ jobs:
     permissions:
       contents: read
       id-token: write # required for WIF; nothing else needs write
+
+    # PIN THE PROJECT FOR EVERY STEP.
+    #
+    # google-github-actions/auth exports CLOUDSDK_CORE_PROJECT set to the
+    # SERVICE ACCOUNT's project - tsq-ci, where the deploy identities live - and
+    # an environment variable OVERRIDES `gcloud config set project`. So
+    # setup-gcloud's project_id was being silently ignored and every bare
+    # `gcloud` call ran against tsq-ci instead of tsq-jainerp-prod.
+    #
+    # The symptom was a confident lie rather than an error: `gcloud run services
+    # describe superadmin-api` found nothing in tsq-ci and the workflow
+    # announced "superadmin-api does not exist yet - this run creates it and
+    # takes 100% traffic immediately". It exists; it is just in another project.
+    # Diagnosed 2026-08-17 from the env dump in the run log.
+    env:
+      CLOUDSDK_CORE_PROJECT: ${{ inputs.project_id }}
+      CLOUDSDK_PROJECT: ${{ inputs.project_id }}
+      GOOGLE_CLOUD_PROJECT: ${{ inputs.project_id }}
+      GCLOUD_PROJECT: ${{ inputs.project_id }}
 
     steps:
       - name: Check the caller passed everything
