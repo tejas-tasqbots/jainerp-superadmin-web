@@ -329,11 +329,21 @@ jobs:
             --quiet
 
       - name: Verify through the load balancer
-        if: ${{ secrets.PROD_VERIFY_URL != '' }}
+        # The emptiness check is INSIDE the script, not in an `if:`.
+        # `secrets` is not available in an if: condition either - GitHub
+        # rejects the whole file with "Unrecognized named-value: 'secrets'".
+        # That is the third place the secrets context is refused, after
+        # `with:` on a reusable call and `vars.`-vs-Secrets. Reading it into
+        # env: and testing the variable in bash sidesteps all of them.
         env:
           URL: ${{ secrets.PROD_VERIFY_URL }}
         run: |
           set -euo pipefail
+          if [ -z "${URL:-}" ]; then
+            echo "PROD_VERIFY_URL is not set - skipping the post-shift check."
+            echo "This SKIPS verification; it does not silently pass it."
+            exit 0
+          fi
           for i in $(seq 1 20); do
             if curl -fsS -m 10 "$URL" >/dev/null; then
               echo "verified $URL after $i attempt(s)"
