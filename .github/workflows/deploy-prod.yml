@@ -26,19 +26,23 @@
 #
 # Before the first run, two things must be true:
 #   1. the 'production' environment exists in THIS repo, with required reviewers
-#   2. these four are set as repository/organization SECRETS (not variables):
+#   2. these four exist in the repo/org **Variables** tab - NOT Secrets:
 #        GCP_IMAGE_REPO  GCP_WIF_PROVIDER  GCP_DEPLOY_SA  PROD_VERIFY_URL
 #
-# They read from `secrets.` rather than `vars.` because that is where they
-# are stored. None of them is actually sensitive - the whole point of
-# Workload Identity Federation is that there is no credential to leak, and
-# an image path and a health URL are public strings.
+# THE VARIABLES TAB IS NOT A PREFERENCE, IT IS THE ONLY OPTION. A reusable
+# workflow's `with:` block cannot see the `secrets` context at all - GitHub
+# rejects the file outright with:
+#     Unrecognized named-value: 'secrets'
+# Only github, needs, vars and inputs are available there. Storing these as
+# secrets instead makes vars.* resolve to empty, and the guard in
+# deploy-cloudrun.yml then fails with 'IMAGE_REPO is empty'. Both failure
+# modes were hit on 2026-08-17; neither error names the real cause.
 #
-# The one real cost: GitHub MASKS secret values in logs, so the image path
-# and service-account email appear as *** in every deploy. When a push or an
-# auth call fails you cannot see which target it was using. If that gets
-# annoying, move all four to the Variables tab and change these back to
-# `vars.` - nothing else needs to change.
+# (Passing them under a `secrets:` block instead would work, but it would
+# mean redeclaring all four as secrets in the reusable workflow, and GitHub
+# masks secret values in logs - so the image path and SA email would print
+# as *** exactly when a failed push or auth call needs them readable. None
+# of these is sensitive: WIF exists so there is no credential to leak.)
 # See doc-v2/GCP_CICD_Runbook.md §3.
 # ---------------------------------------------------------------------------
 
@@ -58,10 +62,10 @@ jobs:
     with:
       service: superadmin-web
       run_migrations: false
-      image_repo: ${{ secrets.GCP_IMAGE_REPO }}
-      wif_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-      deploy_sa: ${{ secrets.GCP_DEPLOY_SA }}
+      image_repo: ${{ vars.GCP_IMAGE_REPO }}
+      wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
+      deploy_sa: ${{ vars.GCP_DEPLOY_SA }}
       # Empty until the temporary prod-*.jainerp.org names exist (§4 of
       # PROD_GCP_SETUP_PROMPT.md). Empty means the post-shift check is skipped,
       # not that it silently passes.
-      verify_url: ${{ secrets.PROD_VERIFY_URL }}
+      verify_url: ${{ vars.PROD_VERIFY_URL }}
