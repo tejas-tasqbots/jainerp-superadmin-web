@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# Production deploy for superadmin-web -> Cloud Run, asia-south1.
+#
+# Vite SPA served by nginx. The image is identical to the one the dev box runs - the SPAs call relative /api and the load balancer matches /api/* before the request reaches this container, so nginx.conf's Docker-network proxy_pass is simply never exercised here.
+#
+# This file does NOT replace deploy.yml. That one still ships every push to
+# main onto the shared AWS dev box and must keep working exactly as it does
+# today. This one only ever runs from a v* tag and only ever touches GCP.
+#
+# All the logic lives in the reusable workflow in Tasqbots/jainerp-deploy so
+# that a change to the deploy procedure is one edit, not twelve.
+#
+# Before the first run, three things must be true:
+#   1. the 'production' environment exists in THIS repo, with required reviewers
+#   2. the repository variable GCP_DEPLOY_SA is set to this repo's deploy SA
+#   3. jainerp-deploy has this workflow shared with the org
+#      (Settings -> Actions -> General -> Access)
+# See doc-v2/GCP_CICD_Runbook.md §3.
+# ---------------------------------------------------------------------------
+
+name: Deploy to production (GCP)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    permissions:
+      contents: read
+      id-token: write
+    # @main while the pipeline is being proven. Pin to a tag or SHA once it is:
+    # a reusable workflow on a moving ref is a supply chain into production.
+    uses: Tasqbots/jainerp-deploy/.github/workflows/deploy-cloudrun.yml@main
+    with:
+      service: superadmin-web
+      run_migrations: false
+      image_repo: ${{ vars.GCP_IMAGE_REPO }}
+      wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
+      deploy_sa: ${{ vars.GCP_DEPLOY_SA }}
+      # Empty until the temporary prod-*.jainerp.org names exist (§4 of
+      # PROD_GCP_SETUP_PROMPT.md). Empty means the post-shift check is skipped,
+      # not that it silently passes.
+      verify_url: ${{ vars.PROD_VERIFY_URL }}
