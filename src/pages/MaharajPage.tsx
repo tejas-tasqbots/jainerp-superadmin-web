@@ -96,12 +96,20 @@ export function MaharajPage() {
 // The stored value is the rank; the label is how it is addressed — "Maharaj Ji"
 // and "Mataji" are honorifics, not types, and conflating them loses the
 // distinction between a Muni and an Ailak.
+//
+// The Shwetambar pair (migration 040) was missing here, so opening a Sadhu or
+// Sadhvi for moderation showed a rank list that did not contain that profile's
+// own rank — the select fell back to the first entry, and saving would have
+// re-filed a Shwetambar ascetic as a Digambar Muni.
 const TYPES: { value: string; label: string }[] = [
   { value: 'muni', label: 'Maharaj Ji (Muni)' },
   { value: 'aryika', label: 'Mataji (Aryika)' },
   { value: 'kshullak', label: 'Kshullak Ji' },
   { value: 'kshullika', label: 'Kshullika Ji' },
   { value: 'ailak', label: 'Ailak Ji' },
+  // Shwetambar: "Maharaj Saheb", not the Digambara "Maharaj Ji".
+  { value: 'sadhu', label: 'Maharaj Saheb (Sadhu)' },
+  { value: 'sadhvi', label: 'Sadhviji (Sadhvi)' },
 ];
 
 const SECTS: { value: string; label: string }[] = [

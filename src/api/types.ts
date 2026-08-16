@@ -238,7 +238,8 @@ export interface MaharajProfile {
   // `p.type === 'muni'` was rejected as an impossible comparison.
   // "Maharaj" is a form of ADDRESS for a Muni, not a rank — it is rendered from
   // this value, never stored.
-  type: 'muni' | 'aryika' | 'kshullak' | 'kshullika' | 'ailak';
+  // Digambara ranks, then the Shwetambar pair added by migration 040.
+  type: 'muni' | 'aryika' | 'kshullak' | 'kshullika' | 'ailak' | 'sadhu' | 'sadhvi';
   /** Community (Oswal, Porwal, Agarwal…). NOT the sect — migration 024 split these apart. */
   samuday: string | null;
   /** Sampradaya (digambar|shwetambar). Selected by the API's list and detail queries. */
