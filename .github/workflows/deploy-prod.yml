@@ -7,14 +7,26 @@
 # main onto the shared AWS dev box and must keep working exactly as it does
 # today. This one only ever runs from a v* tag and only ever touches GCP.
 #
-# All the logic lives in the reusable workflow in Tasqbots/jainerp-deploy so
-# that a change to the deploy procedure is one edit, not twelve.
+# The deploy logic lives in .github/workflows/deploy-cloudrun.yml IN THIS REPO -
+# a VENDORED COPY of the one in Tasqbots/jainerp-deploy.
 #
-# Before the first run, three things must be true:
+# Why a copy rather than `uses: Tasqbots/jainerp-deploy/...@main`: both repos are
+# private, and cross-repo reusable workflows from a private repo need the
+# Settings -> Actions -> General -> "Access" option, which this organisation's
+# plan does not offer. GitHub reports the resulting failure as
+# `workflow was not found`, which reads like a missing file rather than a
+# permissions limit. Verified 2026-08-17.
+#
+# THE COST: the deploy procedure now lives in eight places. Change it in
+# jainerp-deploy first, then copy that file into every app repo. There is no
+# automation enforcing they stay in sync.
+#
+# THE ONE UPSIDE: a local `uses: ./...` resolves at the caller's own commit, so
+# there is no moving @main ref pointing into production.
+#
+# Before the first run, two things must be true:
 #   1. the 'production' environment exists in THIS repo, with required reviewers
 #   2. the repository variable GCP_DEPLOY_SA is set to this repo's deploy SA
-#   3. jainerp-deploy has this workflow shared with the org
-#      (Settings -> Actions -> General -> Access)
 # See doc-v2/GCP_CICD_Runbook.md §3.
 # ---------------------------------------------------------------------------
 
@@ -30,9 +42,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # @main while the pipeline is being proven. Pin to a tag or SHA once it is:
-    # a reusable workflow on a moving ref is a supply chain into production.
-    uses: Tasqbots/jainerp-deploy/.github/workflows/deploy-cloudrun.yml@main
+    uses: ./.github/workflows/deploy-cloudrun.yml
     with:
       service: superadmin-web
       run_migrations: false

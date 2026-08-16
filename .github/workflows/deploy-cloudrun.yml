@@ -1,0 +1,380 @@
+# ---------------------------------------------------------------------------
+# Reusable production deploy: one JainERP service -> Cloud Run in asia-south1.
+#
+# Called by every app repo's .github/workflows/deploy-prod.yml. There are twelve
+# repos; PROD_GCP_SETUP_PROMPT.md §5 says build ONE workflow and call it, not
+# paste twelve copies, and that is what this is.
+#
+# It does NOT replace each repo's existing deploy.yml. That one still pushes
+# `main` to the AWS dev box on every merge and is explicitly out of scope
+# (§5, "dev-only, leave them untouched"). This workflow only ever runs from a
+# `v*` tag.
+#
+# Auth is Workload Identity Federation. There is no service-account key here,
+# in any repo, or in any GitHub secret - that is the §12 requirement and the
+# reason a compromised deploy identity is revoked by editing one Terraform
+# binding rather than by hunting for a JSON file.
+# ---------------------------------------------------------------------------
+
+name: Deploy to Cloud Run (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Cloud Run service name, e.g. mandir-api. Matches the compose service name."
+        required: true
+        type: string
+      image_repo:
+        description: "Artifact Registry base, e.g. asia-south1-docker.pkg.dev/tsq-artifacts/jainerp. From the 20-shared output image_repo_base."
+        required: true
+        type: string
+      wif_provider:
+        description: "Full WIF provider resource name. From the 20-shared output wif_provider_name."
+        required: true
+        type: string
+      deploy_sa:
+        description: "Deploy service account email for THIS repo. From the 20-shared output deployer_service_accounts."
+        required: true
+        type: string
+      project_id:
+        description: "Target project."
+        required: false
+        type: string
+        default: tsq-jainerp-prod
+      region:
+        description: "DPDPA 2023 residency: asia-south1, not negotiable."
+        required: false
+        type: string
+        default: asia-south1
+      dockerfile:
+        required: false
+        type: string
+        default: ./Dockerfile
+      build_context:
+        required: false
+        type: string
+        default: .
+      run_migrations:
+        description: "Execute the DB bootstrap Cloud Run Job before shifting traffic. True for superadmin-api only."
+        required: false
+        type: boolean
+        default: false
+      migration_job:
+        required: false
+        type: string
+        default: jainerp-db-bootstrap
+      verify_url:
+        description: >-
+          Public URL to curl AFTER traffic is shifted, e.g.
+          https://prod-app.jainerp.org/api/v1/health . Leave empty to skip.
+          It must go through the load balancer - see the note on run.app below.
+        required: false
+        type: string
+        default: ""
+      revision_ready_timeout:
+        description: "Seconds to wait for the new revision to report Ready."
+        required: false
+        type: number
+        default: 300
+
+concurrency:
+  # Per service, not per repo: two tags pushed in quick succession must not
+  # race each other through the traffic shift.
+  group: deploy-prod-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Resolves against the CALLING repository. This is the release gate from
+    # PROD_GCP_SETUP_PROMPT.md §1 - required reviewers on the 'production'
+    # environment - and it is also load-bearing for auth: the WIF binding in
+    # modules/wif-github matches attribute.repo_env = "<owner>/<repo>:production".
+    # A workflow without this line gets no `environment` claim in its OIDC token
+    # and cannot authenticate at all. That is deliberate, and Runbook §1.7 says
+    # to test it.
+    environment: production
+
+    permissions:
+      contents: read
+      id-token: write # required for WIF; nothing else needs write
+
+    steps:
+      - name: Check the caller passed everything
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          WIF_PROVIDER: ${{ inputs.wif_provider }}
+          DEPLOY_SA: ${{ inputs.deploy_sa }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for v in IMAGE_REPO WIF_PROVIDER DEPLOY_SA; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is empty. Set the repository variable that feeds it - see doc-v2/GCP_CICD_Runbook.md §3."
+              missing=1
+            fi
+          done
+          [ "$missing" = "0" ]
+
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (keyless)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif_provider }}
+          service_account: ${{ inputs.deploy_sa }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.project_id }}
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          set -euo pipefail
+          host="$(echo "${{ inputs.image_repo }}" | cut -d/ -f1)"
+          gcloud auth configure-docker "$host" --quiet
+
+      # ---------------------------------------------------------------------
+      # Build.
+      #
+      # The tag is the commit SHA, and only the SHA. The Artifact Registry repo
+      # is created with immutable_tags = true, so re-running this workflow on
+      # the same commit would otherwise fail on the push. Instead: if the SHA
+      # tag is already there, reuse it. Re-running a deploy is then idempotent
+      # and cannot quietly ship a different build of the same commit.
+      #
+      # :latest is never pushed and never deployed (§5).
+      # ---------------------------------------------------------------------
+      - name: Resolve or build the image
+        id: image
+        env:
+          IMAGE: ${{ inputs.image_repo }}/${{ inputs.service }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if digest="$(gcloud artifacts docker images describe "$IMAGE:$SHA" \
+                        --format='value(image_summary.digest)' 2>/dev/null)" \
+             && [ -n "$digest" ]; then
+            echo "image for $SHA already in Artifact Registry, reusing $digest"
+          else
+            docker build -f "${{ inputs.dockerfile }}" -t "$IMAGE:$SHA" "${{ inputs.build_context }}"
+            docker push "$IMAGE:$SHA"
+            digest="$(gcloud artifacts docker images describe "$IMAGE:$SHA" \
+                        --format='value(image_summary.digest)')"
+          fi
+          echo "ref=$IMAGE@$digest" >> "$GITHUB_OUTPUT"
+          echo "deploying $IMAGE@$digest"
+
+      # ---------------------------------------------------------------------
+      # Remember what is serving now. Everything after this point can fail, and
+      # the rollback step needs a revision name to go back to. Captured before
+      # the deploy, because after it the "previous" revision is ambiguous.
+      # ---------------------------------------------------------------------
+      - name: Record the currently serving revision
+        id: current
+        env:
+          SERVICE: ${{ inputs.service }}
+          REGION: ${{ inputs.region }}
+        run: |
+          set -euo pipefail
+          if ! gcloud run services describe "$SERVICE" --region="$REGION" >/dev/null 2>&1; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$SERVICE does not exist yet - this run creates it and takes 100% traffic immediately (there is no other revision to hold traffic)."
+            exit 0
+          fi
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          rev="$(gcloud run services describe "$SERVICE" --region="$REGION" \
+                  --format=json | jq -r '[.status.traffic[] | select(.percent==100)][0].revisionName // ""')"
+          echo "revision=$rev" >> "$GITHUB_OUTPUT"
+          echo "currently serving: ${rev:-<none>}"
+
+      # ---------------------------------------------------------------------
+      # Migrations, before any traffic moves (§3.1).
+      #
+      # DbBootstrapService replays init.sql + ~61 migration files against every
+      # database on container start. On Cloud Run that would race across
+      # concurrently starting instances, so the Cloud Run services run with
+      # RUN_DB_BOOTSTRAP=false and this Job - the same image, the flag on - is
+      # the only thing that runs DDL. If it fails, the deploy stops here and
+      # the old revision is still serving.
+      # ---------------------------------------------------------------------
+      - name: Run the database bootstrap job
+        if: ${{ inputs.run_migrations }}
+        env:
+          JOB: ${{ inputs.migration_job }}
+          REGION: ${{ inputs.region }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if ! gcloud run jobs describe "$JOB" --region="$REGION" >/dev/null 2>&1; then
+            echo "::error::Cloud Run Job '$JOB' does not exist. It is created by the prod Terraform (PROD_GCP_SETUP_PROMPT.md Phase 2), not by this workflow."
+            exit 1
+          fi
+          # Point the Job at the image about to ship, so the schema matches the
+          # code that will run against it. `jobs execute` cannot override the
+          # image - its overrides are limited to args, env vars, task count and
+          # timeouts - so this is update-then-execute, not one call.
+          #
+          # The Job's other settings (service account, secrets, VPC egress)
+          # belong to Terraform, which must ignore_changes on the image for the
+          # same reason the services do.
+          gcloud run jobs update "$JOB" \
+            --region="$REGION" \
+            --image="$IMAGE_REF" \
+            --quiet
+          gcloud run jobs execute "$JOB" \
+            --region="$REGION" \
+            --wait
+
+      # ---------------------------------------------------------------------
+      # Deploy without traffic.
+      #
+      # Only --image and the revision tag are passed. Everything else - service
+      # account, env vars, secret refs, VPC egress, scaling bounds - is owned by
+      # Terraform. Passing them here too is how a Cloud Run service ends up with
+      # settings that exist in no repository.
+      # ---------------------------------------------------------------------
+      - name: Deploy the new revision
+        id: deploy
+        env:
+          SERVICE: ${{ inputs.service }}
+          REGION: ${{ inputs.region }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          EXISTS: ${{ steps.current.outputs.exists }}
+        run: |
+          set -euo pipefail
+          rev_tag="r$(echo "${{ github.sha }}" | cut -c1-7)"
+          if [ "$EXISTS" = "true" ]; then
+            gcloud run deploy "$SERVICE" \
+              --region="$REGION" \
+              --image="$IMAGE_REF" \
+              --tag="$rev_tag" \
+              --no-traffic \
+              --quiet
+          else
+            gcloud run deploy "$SERVICE" \
+              --region="$REGION" \
+              --image="$IMAGE_REF" \
+              --tag="$rev_tag" \
+              --quiet
+          fi
+          new_rev="$(gcloud run services describe "$SERVICE" --region="$REGION" \
+                      --format='value(status.latestCreatedRevisionName)')"
+          echo "tag=$rev_tag"       >> "$GITHUB_OUTPUT"
+          echo "revision=$new_rev"  >> "$GITHUB_OUTPUT"
+          echo "created revision $new_rev (tag $rev_tag)"
+
+      # ---------------------------------------------------------------------
+      # Health gate.
+      #
+      # NOTE ON WHY THIS DOES NOT curl THE *.run.app URL.
+      #
+      # The org policy run.allowedIngress (envs/10-org/org_policies.tf) pins
+      # every Cloud Run service in the jainerp folder to
+      # internal-and-cloud-load-balancing. The tagged revision URL is therefore
+      # NOT reachable from a GitHub runner - by design, and Runbook §1.6 tests
+      # exactly that. A curl against it would fail on a perfectly healthy
+      # revision, so the gate would either be permanently red or, worse, get
+      # "fixed" by widening the ingress policy.
+      #
+      # What is a real signal: Cloud Run marks a revision Ready only after the
+      # container starts and passes its startup probe. The prod Terraform sets
+      # that probe to GET the service's health path, so Ready means the app
+      # answered its own health check inside the perimeter. External
+      # verification happens after the traffic shift, through the load balancer,
+      # via verify_url.
+      # ---------------------------------------------------------------------
+      - name: Wait for the revision to become Ready
+        env:
+          REGION: ${{ inputs.region }}
+          REV: ${{ steps.deploy.outputs.revision }}
+          TIMEOUT: ${{ inputs.revision_ready_timeout }}
+        run: |
+          set -euo pipefail
+          deadline=$(( SECONDS + TIMEOUT ))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            json="$(gcloud run revisions describe "$REV" --region="$REGION" --format=json)"
+            state="$(echo "$json" | jq -r '[.status.conditions[] | select(.type=="Ready")][0].status // "Unknown"')"
+            case "$state" in
+              True)
+                echo "revision $REV is Ready"
+                exit 0
+                ;;
+              False)
+                reason="$(echo "$json" | jq -r '[.status.conditions[] | select(.type=="Ready")][0].message // "no message"')"
+                echo "::error::revision $REV failed to start: $reason"
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "::error::revision $REV did not become Ready within ${TIMEOUT}s"
+          exit 1
+
+      - name: Shift 100% of traffic to the new revision
+        env:
+          SERVICE: ${{ inputs.service }}
+          REGION: ${{ inputs.region }}
+          REV: ${{ steps.deploy.outputs.revision }}
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$SERVICE" \
+            --region="$REGION" \
+            --to-revisions="$REV=100" \
+            --quiet
+
+      - name: Verify through the load balancer
+        if: ${{ inputs.verify_url != '' }}
+        env:
+          URL: ${{ inputs.verify_url }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            if curl -fsS -m 10 "$URL" >/dev/null; then
+              echo "verified $URL after $i attempt(s)"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "::error::$URL did not answer after the traffic shift"
+          exit 1
+
+      - name: Confirm what is actually serving
+        env:
+          SERVICE: ${{ inputs.service }}
+          REGION: ${{ inputs.region }}
+          REV: ${{ steps.deploy.outputs.revision }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          serving="$(gcloud run services describe "$SERVICE" --region="$REGION" \
+                      --format=json | jq -r '[.status.traffic[] | select(.percent==100)][0].revisionName // ""')"
+          if [ "$serving" != "$REV" ]; then
+            echo "::error::expected $REV to serve 100%, but $serving does"
+            exit 1
+          fi
+          echo "$SERVICE is serving $REV ($IMAGE_REF)"
+
+      # ---------------------------------------------------------------------
+      # Auto-rollback (§5). Only meaningful when there WAS a previous revision;
+      # on a first-ever deploy there is nothing to go back to and the failure
+      # is left standing rather than hidden.
+      # ---------------------------------------------------------------------
+      - name: Roll back
+        if: ${{ failure() && steps.current.outputs.exists == 'true' && steps.current.outputs.revision != '' }}
+        env:
+          SERVICE: ${{ inputs.service }}
+          REGION: ${{ inputs.region }}
+          PREV: ${{ steps.current.outputs.revision }}
+        run: |
+          set -euo pipefail
+          echo "::warning::deploy failed - restoring $PREV to 100% traffic"
+          gcloud run services update-traffic "$SERVICE" \
+            --region="$REGION" \
+            --to-revisions="$PREV=100" \
+            --quiet
+          echo "rolled back to $PREV"
