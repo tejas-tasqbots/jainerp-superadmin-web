@@ -107,25 +107,6 @@ jobs:
       contents: read
       id-token: write # required for WIF; nothing else needs write
 
-    # PIN THE PROJECT FOR EVERY STEP.
-    #
-    # google-github-actions/auth exports CLOUDSDK_CORE_PROJECT set to the
-    # SERVICE ACCOUNT's project - tsq-ci, where the deploy identities live - and
-    # an environment variable OVERRIDES `gcloud config set project`. So
-    # setup-gcloud's project_id was being silently ignored and every bare
-    # `gcloud` call ran against tsq-ci instead of tsq-jainerp-prod.
-    #
-    # The symptom was a confident lie rather than an error: `gcloud run services
-    # describe superadmin-api` found nothing in tsq-ci and the workflow
-    # announced "superadmin-api does not exist yet - this run creates it and
-    # takes 100% traffic immediately". It exists; it is just in another project.
-    # Diagnosed 2026-08-17 from the env dump in the run log.
-    env:
-      CLOUDSDK_CORE_PROJECT: ${{ inputs.project_id }}
-      CLOUDSDK_PROJECT: ${{ inputs.project_id }}
-      GOOGLE_CLOUD_PROJECT: ${{ inputs.project_id }}
-      GCLOUD_PROJECT: ${{ inputs.project_id }}
-
     steps:
       - name: Check the caller passed everything
         env:
@@ -156,6 +137,30 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ inputs.project_id }}
+
+      - name: Pin gcloud to the target project
+        # google-github-actions/auth writes CLOUDSDK_CORE_PROJECT into
+        # $GITHUB_ENV, set to the SERVICE ACCOUNT's project (tsq-ci, where the
+        # deploy identities live). That beats both `gcloud config set project`
+        # AND a job-level `env:` block, because a $GITHUB_ENV write overrides
+        # job env for every later step. So setup-gcloud's project_id was being
+        # silently ignored and every bare `gcloud` call ran against tsq-ci.
+        #
+        # Writing the same keys to $GITHUB_ENV again, from a LATER step, is what
+        # actually wins - last write to $GITHUB_ENV takes effect.
+        #
+        # The symptom was a confident lie rather than an error. `gcloud run
+        # services describe superadmin-api` found nothing in tsq-ci, so the
+        # workflow announced "superadmin-api does not exist yet - this run
+        # creates it and takes 100% traffic immediately", and later
+        # "Cloud Run Job 'db-bootstrap' does not exist". Both exist, in
+        # tsq-jainerp-prod. Diagnosed 2026-08-17 from the env dump in the log.
+        run: |
+          set -euo pipefail
+          for k in CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GOOGLE_CLOUD_PROJECT GCLOUD_PROJECT GCP_PROJECT; do
+            echo "$k=${{ inputs.project_id }}" >> "$GITHUB_ENV"
+          done
+          echo "pinned gcloud project to ${{ inputs.project_id }}"
 
       - name: Configure Docker for Artifact Registry
         run: |
