@@ -57,6 +57,16 @@ on:
         required: false
         type: string
         default: db-bootstrap
+      build_project:
+        description: "Project that runs Cloud Build. Same project as the registry, so the push is same-project."
+        required: false
+        type: string
+        default: tsq-artifacts
+      build_service_account:
+        description: "Identity the build runs as. From the 20-shared output cloudbuild_service_account."
+        required: false
+        type: string
+        default: sa-cloudbuild@tsq-artifacts.iam.gserviceaccount.com
       revision_ready_timeout:
         description: "Seconds to wait for the new revision to report Ready."
         required: false
@@ -126,9 +136,6 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # Required for the --cache-from/--cache-to below; plain `docker build`
-      # cannot use the GitHub Actions cache.
-      - uses: docker/setup-buildx-action@v3
 
       - name: Authenticate to Google Cloud (keyless)
         id: auth
@@ -195,8 +202,22 @@ jobs:
              && [ -n "$digest" ]; then
             echo "image for $SHA already in Artifact Registry, reusing $digest"
           else
-            docker buildx build               --cache-from=type=gha               --cache-to=type=gha,mode=max               --load               -f "${{ inputs.dockerfile }}" -t "$IMAGE:$SHA" "${{ inputs.build_context }}"
-            docker push "$IMAGE:$SHA"
+            # BUILT BY CLOUD BUILD, NOT THIS RUNNER.
+            #
+            # The org exhausted its 2,000 free GitHub Actions minutes in August
+            # 2026 and every private-repo workflow stopped. The docker build is
+            # the expensive part of a deploy - two npm install passes per image,
+            # across eight repos - and the part that least needs a GitHub runner.
+            #
+            # Actions still owns the pipeline: approval gate, WIF auth, deploy,
+            # traffic shift, verification. Only the build moves, onto a US$2,000
+            # GCP credit expiring 16 July 2027 that is barely touched, plus 120
+            # free build-minutes a day.
+            #
+            # --service-account is required: builds run as sa-cloudbuild, and
+            # the legacy default @cloudbuild.gserviceaccount.com identity is no
+            # longer created for new projects.
+            gcloud builds submit               --project="${{ inputs.build_project }}"               --config=cloudbuild.yaml               --service-account="projects/${{ inputs.build_project }}/serviceAccounts/${{ inputs.build_service_account }}"               --substitutions="_IMAGE=$IMAGE,_TAG=$SHA,_DOCKERFILE=${{ inputs.dockerfile }}"               "${{ inputs.build_context }}"
             digest="$(gcloud artifacts docker images describe "$IMAGE:$SHA" \
                         --format='value(image_summary.digest)')"
           fi

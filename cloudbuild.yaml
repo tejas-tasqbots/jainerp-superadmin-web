@@ -1,0 +1,43 @@
+# Cloud Build spec for the production image.
+#
+# Invoked by .github/workflows/deploy-cloudrun.yml via `gcloud builds submit`.
+# The build runs here rather than on a GitHub runner because the org exhausted
+# its 2,000 free Actions minutes; see that workflow for the full reasoning.
+#
+# Substitutions come from the workflow:
+#   _IMAGE       asia-south1-docker.pkg.dev/tsq-artifacts/jainerp/<service>
+#   _TAG         the commit SHA
+#   _DOCKERFILE  path to the Dockerfile
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - '${_DOCKERFILE}'
+      - -t
+      - '${_IMAGE}:${_TAG}'
+      - .
+
+# NO LAYER CACHE, DELIBERATELY.
+#
+# The obvious trick - push a reusable ${_IMAGE}:cache tag and --cache-from it -
+# CANNOT work here: the jainerp repository is created with immutableTags = true,
+# so the second build of any service would fail trying to move that tag.
+#
+# Adding a cache is therefore not a one-line change; it needs a separate
+# mutable repository (e.g. jainerp-cache) for layer blobs. Not worth it yet:
+# E2_HIGHCPU_8 builds these in a couple of minutes, and Cloud Build includes
+# 120 build-minutes a day free - roughly 40 builds - against a US$2,000 credit
+# that expires unused otherwise. Revisit if build time starts to hurt.
+images:
+  - '${_IMAGE}:${_TAG}'
+
+options:
+  # Required when a build runs as a user-specified service account: it cannot
+  # use Cloud Build's default log bucket, so it logs to Cloud Logging instead.
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s
