@@ -24,8 +24,13 @@
 name: Deploy to production (GCP)
 
 on:
-  push:
-    branches: [prod]
+  # MANUAL ONLY - there is deliberately no `push:` trigger. See dev.yml for why
+  # (GitHub Free has no required-reviewers rule on private repos, so an
+  # environment gate is not available and pushes would deploy unattended).
+  #
+  # Run this from the Actions tab and pick the `prod` branch in the dialog.
+  # Merge main -> prod first; the branch is still the record of what is in
+  # production, it just no longer triggers by itself.
   workflow_dispatch:
 
 concurrency:

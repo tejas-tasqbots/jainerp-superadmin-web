@@ -17,16 +17,21 @@
 name: Build & Deploy (superadmin-web)
 
 on:
-  push:
-    branches: [main]
-    # A README or doc change should not cost a docker build, an image push and
-    # an EC2 deploy. Added 2026-08 after the org exhausted its free Actions
-    # minutes.
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.gitignore'
-      - 'LICENSE'
+  # MANUAL ONLY - there is deliberately no `push:` trigger.
+  #
+  # The plan was to keep `push: branches: [main]` and gate it with a
+  # `development` environment requiring a reviewer. THAT IS NOT AVAILABLE HERE:
+  # GitHub Free does not offer the required-reviewers protection rule on private
+  # repos. Creating it returns
+  #   422 "Please ensure the billing plan supports the required reviewers
+  #        protection rule"
+  # and the `production` environment turned out to have protection_rules: []
+  # too - so nothing was ever actually gated. Verified 2026-08-17 via the API.
+  #
+  # Without a gate, every push to main spent ~3 minutes automatically, across
+  # eight repos. That is what exhausted the 2,000 free Actions minutes. So the
+  # control is the trigger itself: run this from the Actions tab when you want
+  # a dev deploy, choosing the branch in the dialog.
   workflow_dispatch:
 
 concurrency:
@@ -42,9 +47,6 @@ jobs:
   # image build. This job runs the checks first and the deploy waits on it.
   verify:
     runs-on: ubuntu-latest
-    # The gate sits on the FIRST job deliberately: build-and-deploy
-    # `needs` it, so approval happens before a single minute is spent.
-    environment: development
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
