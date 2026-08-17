@@ -1,3 +1,19 @@
+# ---------------------------------------------------------------------------
+# DEV deploy -> the shared AWS EC2 box.        [1 of 2 workflows in this repo]
+#
+#   main  -> dev  (AWS EC2)       THIS FILE
+#   prod  -> prod (GCP Cloud Run) .github/workflows/prod.yml
+#
+# APPROVAL GATED. The `development` environment requires a reviewer, so a push
+# to main queues and burns NO Actions minutes until you approve it. The org ran
+# out of its 2,000 free minutes in August 2026 with eight repos auto-building on
+# every push; this is the fix.
+#
+# ONE-TIME SETUP: create an environment named exactly `development` in this
+# repo (Settings -> Environments) and add yourself as a required reviewer.
+# WITHOUT THAT REVIEWER THE GATE DOES NOTHING - GitHub creates the environment
+# implicitly on first use and runs straight through it.
+# ---------------------------------------------------------------------------
 name: Build & Deploy (superadmin-web)
 
 on:
@@ -26,6 +42,9 @@ jobs:
   # image build. This job runs the checks first and the deploy waits on it.
   verify:
     runs-on: ubuntu-latest
+    # The gate sits on the FIRST job deliberately: build-and-deploy
+    # `needs` it, so approval happens before a single minute is spent.
+    environment: development
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
