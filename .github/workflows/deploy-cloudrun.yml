@@ -126,6 +126,10 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # Required for the --cache-from/--cache-to below; plain `docker build`
+      # cannot use the GitHub Actions cache.
+      - uses: docker/setup-buildx-action@v3
+
       - name: Authenticate to Google Cloud (keyless)
         id: auth
         uses: google-github-actions/auth@v2
@@ -191,7 +195,7 @@ jobs:
              && [ -n "$digest" ]; then
             echo "image for $SHA already in Artifact Registry, reusing $digest"
           else
-            docker build -f "${{ inputs.dockerfile }}" -t "$IMAGE:$SHA" "${{ inputs.build_context }}"
+            docker buildx build               --cache-from=type=gha               --cache-to=type=gha,mode=max               --load               -f "${{ inputs.dockerfile }}" -t "$IMAGE:$SHA" "${{ inputs.build_context }}"
             docker push "$IMAGE:$SHA"
             digest="$(gcloud artifacts docker images describe "$IMAGE:$SHA" \
                         --format='value(image_summary.digest)')"

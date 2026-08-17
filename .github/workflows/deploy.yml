@@ -3,6 +3,14 @@ name: Build & Deploy (superadmin-web)
 on:
   push:
     branches: [main]
+    # A README or doc change should not cost a docker build, an image push and
+    # an EC2 deploy. Added 2026-08 after the org exhausted its free Actions
+    # minutes.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
@@ -44,12 +52,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Buildx is what makes the GitHub Actions layer cache below usable.
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
+          # LAYER CACHE. Without this every build ran `npm install` twice from
+          # cold - once for the builder stage, once for the runtime stage - on
+          # every push to main, across eight repos. That is what exhausted the
+          # 2,000 free Actions minutes for the month (2026-08).
+          #
+          # mode=max caches intermediate stages too, which is the point: the
+          # expensive layer is the builder's node_modules, and it only changes
+          # when package-lock.json does.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ github.sha }}
