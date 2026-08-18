@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, type ApiMeta } from '../api/client';
 import type { MaharajProfile } from '../api/types';
-import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
+import { ActionForm, Badge, ErrorBox, Modal, Pagination, useToast } from '../components/ui';
+import { PhotoPicker } from '../components/PhotoPicker';
 import { StateSelect, CitySelect } from '../components/GeoSelect';
 import { LocationPicker } from '../components/LocationPicker';
 
@@ -14,6 +15,7 @@ export function MaharajPage() {
   const [error, setError] = useState<unknown>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [manageId, setManageId] = useState<string | null>(null);
+  const toast = useToast();
 
   const load = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), limit: '25' });
@@ -25,13 +27,18 @@ export function MaharajPage() {
   }, [page, q, verifiedFilter]);
   useEffect(load, [load]);
 
-  async function run(fn: () => Promise<unknown>) {
+  async function run(fn: () => Promise<unknown>, done?: string) {
     setError(null);
-    try { await fn(); load(); } catch (e) { setError(e); }
+    try {
+      await fn();
+      load();
+      if (done) toast.show(done);
+    } catch (e) { setError(e); }
   }
 
   return (
     <div>
+      {toast.node}
       <h1>Sadhu-Sadhvi Directory</h1>
       <ErrorBox error={error} />
       <div className="toolbar">
@@ -64,10 +71,12 @@ export function MaharajPage() {
                 {!m.verified ? (
                   <button className="btn sm primary" onClick={() => run(() =>
                     api(`/admin/maharaj/${m.id}/verify`, { method: 'PATCH', body: { verified: true } }),
+                    `${m.name} is now verified and visible to devotees.`,
                   )}>Verify</button>
                 ) : (
                   <button className="btn sm" onClick={() => run(() =>
                     api(`/admin/maharaj/${m.id}/verify`, { method: 'PATCH', body: { verified: false } }),
+                    `${m.name} is no longer verified — hidden from devotees.`,
                   )}>Un-verify</button>
                 )}
               </td>
@@ -80,12 +89,13 @@ export function MaharajPage() {
 
       {showCreate && (
         <Modal title="Add Sadhu-Sadhvi" onClose={() => setShowCreate(false)}>
-          <MaharajCreateForm onDone={() => { setShowCreate(false); load(); }} />
+          <MaharajCreateForm onDone={() => { setShowCreate(false); load(); toast.show('Profile created.'); }} />
         </Modal>
       )}
       {manageId && (
         <Modal title="Manage profile" onClose={() => setManageId(null)}>
-          <MaharajManage id={manageId} onClose={() => setManageId(null)} onChanged={load} />
+          <MaharajManage id={manageId} onClose={() => setManageId(null)} onChanged={load}
+            onToast={toast.show} />
         </Modal>
       )}
     </div>
@@ -121,13 +131,13 @@ const SECTS: { value: string; label: string }[] = [
 function MaharajCreateForm({ onDone }: { onDone: () => void }) {
   const [form, setForm] = useState({
     name: '', type: 'muni', samuday: '', sect: '', sub_sect: '', state: '', city: '',
-    diksha_year: '', guru_name: '', bio: '', rep_mobile: '', verified: false,
+    diksha_year: '', guru_name: '', bio: '', rep_mobile: '', photo_base64: '', verified: false,
   });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
 
   return (
-    <ActionForm submitLabel="Create" onDone={onDone}
+    <ActionForm submitLabel="Create" onDone={onDone} successMessage={null}
       onSubmit={async () => {
         await api('/admin/maharaj', {
           method: 'POST',
@@ -142,6 +152,9 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
             diksha_year: form.diksha_year ? Number(form.diksha_year) : undefined,
             guru_name: form.guru_name || undefined, bio: form.bio || undefined,
             rep_mobile: form.rep_mobile || undefined, verified: form.verified,
+            // Sent with the create so a curator attaches the photograph in one
+            // step, rather than saving a faceless profile and reopening it.
+            photo_base64: form.photo_base64 || undefined,
           },
         });
       }}>
@@ -173,6 +186,7 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
       <label className="field"><span>Diksha year</span><input type="number" value={form.diksha_year} onChange={set('diksha_year')} /></label>
       <label className="field"><span>Guru name</span><input value={form.guru_name} onChange={set('guru_name')} /></label>
       <label className="field"><span>Bio</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
+      <PhotoPicker value={form.photo_base64} onChange={(v) => setForm({ ...form, photo_base64: v })} />
       <label className="field"><span>Rep mobile (their login, optional)</span>
         <input value={form.rep_mobile} onChange={set('rep_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" />
       </label>
@@ -184,15 +198,22 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-interface Rep { id: string; mobile: string; name: string | null; user_id: string | null }
+interface Rep {
+  id: string; mobile: string; name: string | null; user_id: string | null;
+  /** Null until an invite message actually left the building — see migration 043. */
+  invite_sent_at: string | null; invite_channel: string | null; invite_error: string | null;
+}
 interface FullProfile extends MaharajProfile {
-  bio: string | null; languages: string[]; photo_url: string | null;
+  bio: string | null; languages: string[]; photo_url: string | null; photo_base64: string | null;
   rep_mobile: string | null; rep_name: string | null;
   current_location: { place: string; city: string | null; state: string | null; lat: number | null; lng: number | null; from_date: string | null; to_date: string | null; chaturmas: boolean; notes: string | null } | null;
   reps: Rep[];
 }
 
-function MaharajManage({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+function MaharajManage({ id, onClose, onChanged, onToast }: {
+  id: string; onClose: () => void; onChanged: () => void;
+  onToast: (text: string, tone?: 'ok' | 'bad') => void;
+}) {
   const [p, setP] = useState<FullProfile | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [tab, setTab] = useState<'details' | 'location' | 'reps'>('details');
@@ -215,9 +236,14 @@ function MaharajManage({ id, onClose, onChanged }: { id: string; onClose: () => 
         ))}
       </div>
 
-      {tab === 'details' && <DetailsTab p={p} onDone={() => { load(); onChanged(); }} onDeleted={() => { onChanged(); onClose(); }} />}
-      {tab === 'location' && <LocationTab p={p} onDone={() => { load(); onChanged(); }} />}
-      {tab === 'reps' && <RepsTab p={p} onChanged={load} />}
+      {tab === 'details' && (
+        <DetailsTab p={p} onDone={() => { load(); onChanged(); onToast('Profile saved.'); }}
+          onDeleted={() => { onChanged(); onClose(); onToast('Profile deleted.'); }} />
+      )}
+      {tab === 'location' && (
+        <LocationTab p={p} onDone={() => { load(); onChanged(); onToast('Current location saved.'); }} />
+      )}
+      {tab === 'reps' && <RepsTab p={p} onChanged={load} onToast={onToast} />}
     </div>
   );
 }
@@ -227,8 +253,14 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
     name: p.name, type: p.type, samuday: p.samuday ?? '',
     sect: p.sect ?? '', sub_sect: p.sub_sect ?? '', state: p.state ?? '', city: p.city ?? '',
     diksha_year: p.diksha_year != null ? String(p.diksha_year) : '', guru_name: p.guru_name ?? '',
-    bio: p.bio ?? '', languages: (p.languages ?? []).join(', '), photo_url: p.photo_url ?? '', verified: p.verified,
+    bio: p.bio ?? '', languages: (p.languages ?? []).join(', '), verified: p.verified,
   });
+  // Kept out of `form` because it does not travel with the PATCH: the photo
+  // has its own endpoint (as it does in the sant portal), so a 200 KB data URI
+  // is not re-posted every time somebody fixes a typo in the bio.
+  // Inline wins over the legacy URL on read, so it wins here too.
+  const [photo, setPhoto] = useState(p.photo_base64 ?? p.photo_url ?? '');
+  const originalPhoto = p.photo_base64 ?? p.photo_url ?? '';
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
 
@@ -247,10 +279,16 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
               sect: form.sect || undefined, sub_sect: form.sub_sect || undefined,
               state: form.state || null, city: form.city || null,
               diksha_year: form.diksha_year ? Number(form.diksha_year) : null,
-              guru_name: form.guru_name || null, bio: form.bio || null, photo_url: form.photo_url || null,
+              guru_name: form.guru_name || null, bio: form.bio || null,
               languages: form.languages.split(',').map((l) => l.trim()).filter(Boolean),
             },
           });
+          // Only when it actually changed — re-posting an unchanged photo would
+          // put a needless 200 KB on the wire for every text edit.
+          if (photo !== originalPhoto) {
+            if (photo) await api(`/admin/maharaj/${p.id}/photo`, { method: 'POST', body: { photo_base64: photo } });
+            else await api(`/admin/maharaj/${p.id}/photo`, { method: 'DELETE' });
+          }
           if (form.verified !== p.verified) {
             await api(`/admin/maharaj/${p.id}/verify`, { method: 'PATCH', body: { verified: form.verified } });
           }
@@ -280,7 +318,7 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
         <label className="field"><span>Diksha year</span><input type="number" value={form.diksha_year} onChange={set('diksha_year')} /></label>
         <label className="field"><span>Guru name</span><input value={form.guru_name} onChange={set('guru_name')} /></label>
         <label className="field"><span>Languages (comma-separated)</span><input value={form.languages} onChange={set('languages')} placeholder="gujarati, hindi" /></label>
-        <label className="field"><span>Photo URL</span><input value={form.photo_url} onChange={set('photo_url')} /></label>
+        <PhotoPicker value={photo} onChange={setPhoto} />
         <label className="field"><span>Bio</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
         <label className="field-check">
           <input type="checkbox" checked={form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
@@ -343,7 +381,10 @@ function LocationTab({ p, onDone }: { p: FullProfile; onDone: () => void }) {
   );
 }
 
-function RepsTab({ p, onChanged }: { p: FullProfile; onChanged: () => void }) {
+function RepsTab({ p, onChanged, onToast }: {
+  p: FullProfile; onChanged: () => void;
+  onToast: (text: string, tone?: 'ok' | 'bad') => void;
+}) {
   const [mobile, setMobile] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState<unknown>(null);
@@ -353,9 +394,51 @@ function RepsTab({ p, onChanged }: { p: FullProfile; onChanged: () => void }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await api(`/admin/maharaj/${p.id}/reps`, { method: 'POST', body: { mobile, name: name || undefined } });
+      // The response now says whether the invite reached them, so the console
+      // can stop claiming "Invited" for a message that was never sent.
+      const { data } = await api<{ invite_sent?: boolean; invite_channel?: string | null; invite_error?: string | null }>(
+        `/admin/maharaj/${p.id}/reps`, { method: 'POST', body: { mobile, name: name || undefined } },
+      );
       setMobile(''); setName(''); onChanged();
+      if (data?.invite_sent) onToast(`Representative added — invite sent by ${data.invite_channel ?? 'message'}.`);
+      else onToast(`Representative added, but the invite could not be sent (${data?.invite_error ?? 'unknown reason'}). They can still sign in with this number.`, 'bad');
     } catch (err) { setError(err); } finally { setBusy(false); }
+  }
+
+  async function resend(rep: Rep) {
+    try {
+      const { data } = await api<{ invite_sent?: boolean; invite_channel?: string | null; invite_error?: string | null }>(
+        `/admin/maharaj/${p.id}/reps/${rep.id}/resend-invite`, { method: 'POST' },
+      );
+      onChanged();
+      if (data?.invite_sent) onToast(`Invite re-sent to ${rep.mobile} by ${data.invite_channel ?? 'message'}.`);
+      else onToast(`Could not send the invite: ${data?.invite_error ?? 'unknown reason'}`, 'bad');
+    } catch (err) { setError(err); }
+  }
+
+  /**
+   * What the row says about this person, in the order that matters to the
+   * curator: signed in > invite delivered > nothing sent.
+   *
+   * The last case used to read "Invited", which was simply untrue — no message
+   * had ever gone out and there was nothing on screen to suggest otherwise.
+   */
+  function status(r: Rep) {
+    if (r.user_id) return <span>Signed in</span>;
+    if (r.invite_sent_at) {
+      return (
+        <span>
+          Invited {formatDate(r.invite_sent_at)}
+          {r.invite_channel ? <span className="muted"> · {r.invite_channel}</span> : null}
+        </span>
+      );
+    }
+    return (
+      <span style={{ color: '#b45309' }}>
+        Not invited yet
+        {r.invite_error ? <span className="muted" title={r.invite_error}> · send failed</span> : null}
+      </span>
+    );
   }
 
   return (
@@ -372,12 +455,20 @@ function RepsTab({ p, onChanged }: { p: FullProfile; onChanged: () => void }) {
             <tr key={r.id}>
               <td className="mono">{r.mobile}</td>
               <td>{r.name ?? <span className="muted">—</span>}</td>
-              <td>{r.user_id ? 'Linked' : 'Invited'}</td>
+              <td>{status(r)}</td>
               <td>
+                {!r.user_id && (
+                  <>
+                    <button className="btn sm" onClick={() => resend(r)}>
+                      {r.invite_sent_at ? 'Resend invite' : 'Send invite'}
+                    </button>{' '}
+                  </>
+                )}
                 <button className="btn sm danger" onClick={async () => {
                   if (confirm('Remove this representative?')) {
                     await api(`/admin/maharaj/${p.id}/reps/${r.id}`, { method: 'DELETE' });
                     onChanged();
+                    onToast('Representative removed.');
                   }
                 }}>Remove</button>
               </td>
