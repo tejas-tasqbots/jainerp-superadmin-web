@@ -264,23 +264,64 @@ export interface MaharajProfile {
    * detail. Most historical entries record that an ascetic attained samadhi and
    * nothing more, so NEVER infer the state from the date — the profile is then
    * a record: it keeps its history and stays visible, but has no
-   * representatives and no current location.
+   * sangh representatives and no current location.
    */
   samadhi_date: string | null;
   is_samadhistha: boolean;
   /** How many people can act for this profile — the moderation queue reads it. */
   reps_count: number;
-  /** Requests a sant admin has not decided. Non-zero means somebody is waiting. */
+  /** Requests a Sanghpati admin has not decided. Non-zero means somebody is waiting. */
   pending_rep_requests: number;
+  /** Home/base city and its state. NOT where the ascetic is now. */
   city: string | null;
   state: string | null;
+  /**
+   * Where the ascetic is now, denormalised from the current location row.
+   *
+   * These two go together and `current_city` must NEVER be paired with `state`:
+   * that pairing rendered "Sangli, Jammu and Kashmir" for an ascetic based in
+   * J&K who is presently in Maharashtra. `current_state` arrived with migration
+   * 046 precisely because the value was not being carried out of the location.
+   */
   current_city: string | null;
+  current_state: string | null;
   diksha_year: number | null;
   guru_name: string | null;
   verified: boolean;
   verified_at: string | null;
   followers_count: number;
   created_at: string;
+  /** Sangh membership (migration 047). Null is normal — many are unaffiliated. */
+  sangh_id: string | null;
+  sangh_name: string | null;
+  /** One of this sangh's head ascetics. A sangh commonly has several. */
+  is_sangh_head: boolean;
+}
+
+/** A monastic group. Its heads are members flagged `is_sangh_head`. */
+export interface SanghHead {
+  id: string;
+  name: string;
+  name_en: string | null;
+  name_hi: string | null;
+  type: string;
+  pad: string | null;
+}
+
+export interface Sangh {
+  id: string;
+  slug: string;
+  name_en: string;
+  name_hi: string | null;
+  parampara: string | null;
+  sect: string | null;
+  about: string | null;
+  verified: boolean;
+  verified_at: string | null;
+  created_at: string;
+  members_count: number;
+  heads_count: number;
+  heads: SanghHead[];
 }
 
 export interface AdminUser {

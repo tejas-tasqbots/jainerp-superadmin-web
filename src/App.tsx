@@ -1,10 +1,11 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Compass, Landmark, LayoutDashboard, LogOut, MessageSquareQuote, Package, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users } from 'lucide-react';
+import { Compass, Landmark, LayoutDashboard, LogOut, MessageSquareQuote, Package, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
 import { LoginPage } from './pages/LoginPage';
 import { MaharajPage } from './pages/MaharajPage';
+import { SanghsPage } from './pages/SanghsPage';
 import { DonationAccountsPage } from './pages/DonationAccountsPage';
 import { ChangeRequestsPage } from './pages/ChangeRequestsPage';
 import { PlansPage } from './pages/PlansPage';
@@ -21,6 +22,9 @@ const navItems = [
   { to: '/mandirs', label: 'Manage Mandir', icon: <Landmark size={18} /> },
   { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
   { to: '/maharaj', label: 'Sadhu-Sadhvi', icon: <Sparkles size={18} /> },
+  // Directly under Sadhu-Sadhvi: a sangh is only ever curated with the roster
+  // in mind, and membership itself is set from that page.
+  { to: '/sanghs', label: 'Sanghs', icon: <Users2 size={18} /> },
   { to: '/change-requests', label: 'Change Requests', icon: <ShieldCheck size={18} /> },
   // Sits beside Change Requests because it is the same job: approving something
   // a trust cannot approve for itself, where the cost of not looking is a donor
@@ -74,6 +78,7 @@ function Layout() {
           <Route path="/mandirs/:id" element={<TenantDetailPage />} />
           <Route path="/devotees" element={<DevoteesPage />} />
           <Route path="/maharaj" element={<MaharajPage />} />
+          <Route path="/sanghs" element={<SanghsPage />} />
           <Route path="/change-requests" element={<ChangeRequestsPage />} />
           <Route path="/donation-accounts" element={<DonationAccountsPage />} />
           <Route path="/registrations" element={<RegistrationsPage />} />

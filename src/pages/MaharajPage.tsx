@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, type ApiMeta } from '../api/client';
-import type { MaharajProfile } from '../api/types';
+import type { MaharajProfile, Sangh } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination, useToast } from '../components/ui';
 import { PhotoPicker } from '../components/PhotoPicker';
 import { StateSelect, CitySelect } from '../components/GeoSelect';
@@ -32,8 +32,15 @@ export function MaharajPage() {
   // The readiness report for 044: who is still English-only, and therefore
   // rendered in Latin script to every Hindi-reading devotee.
   const [hindiMissing, setHindiMissing] = useState(false);
+  // Sangh (migration 047). '' = every sangh, 'none' = the curation report for
+  // ascetics not yet placed in one.
+  const [sanghFilter, setSanghFilter] = useState('');
+  // 25 suits a moderation queue; reviewing a seeded sangh of 200 does not.
+  const [limit, setLimit] = useState(25);
+  const [sanghs, setSanghs] = useState<Sangh[]>([]);
   const [showImport, setShowImport] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
+  const [showBulkSangh, setShowBulkSangh] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [queue, setQueue] = useState<GlobalRepRequest[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -42,19 +49,30 @@ export function MaharajPage() {
   const toast = useToast();
 
   const load = useCallback(() => {
-    const params = new URLSearchParams({ page: String(page), limit: '25' });
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (q) params.set('q', q);
     if (verifiedFilter) params.set('verified', verifiedFilter);
     if (statusFilter) params.set('status', statusFilter);
     if (hindiMissing) params.set('name_hi_missing', 'true');
+    if (sanghFilter === 'none') params.set('sangh_missing', 'true');
+    else if (sanghFilter) params.set('sangh_id', sanghFilter);
     api<MaharajProfile[]>(`/admin/maharaj?${params}`)
       .then((r) => { setRows(r.data); setMeta(r.meta); })
       .catch(setError);
-  }, [page, q, verifiedFilter, statusFilter, hindiMissing]);
+  }, [page, q, verifiedFilter, statusFilter, hindiMissing, sanghFilter, limit]);
   useEffect(load, [load]);
 
+  // Every sangh, verified or not: this is the console that verifies them, and a
+  // curator must be able to file an ascetic into one they have just created.
+  const loadSanghs = useCallback(() => {
+    api<Sangh[]>('/admin/sanghs')
+      .then((r) => setSanghs(r.data ?? []))
+      .catch(() => { /* the directory is the page; an empty sangh list only disables a filter */ });
+  }, []);
+  useEffect(loadSanghs, [loadSanghs]);
+
   /**
-   * Requests waiting on a sant admin, across every profile.
+   * Requests waiting on a Sanghpati admin, across every profile.
    *
    * We are the escalation path. An admin whose phone is lost, or who has left
    * the sangh, leaves requests nobody can decide — and without a cross-profile
@@ -71,7 +89,7 @@ export function MaharajPage() {
   async function decideQueued(req: GlobalRepRequest, decision: 'approve' | 'reject') {
     await run(
       () => api(`/admin/maharaj/rep-requests/${req.id}/${decision}`, { method: 'POST' }),
-      decision === 'approve' ? 'Approved — the representative has been invited.' : 'Request rejected.',
+      decision === 'approve' ? 'Approved — the sangh representative has been invited.' : 'Request rejected.',
     );
     loadQueue();
   }
@@ -97,10 +115,10 @@ export function MaharajPage() {
           background: '#fffbeb', border: '1px solid #fde68a',
         }}>
           <strong style={{ fontSize: 13 }}>
-            {queue.length} request(s) to add a representative are waiting on a sant admin
+            {queue.length} request(s) to add a sangh representative are waiting on a Sanghpati admin
           </strong>
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
-            The sant admin normally decides these. Act here only when they cannot — a lost phone,
+            The Sanghpati admin normally decides these. Act here only when they cannot — a lost phone,
             or somebody no longer with the sangh.
           </p>
           <table className="data">
@@ -139,15 +157,46 @@ export function MaharajPage() {
           <option value="living">Living only</option>
           <option value="samadhistha">Samadhistha only</option>
         </select>
+        <select value={sanghFilter} onChange={(e) => { setSanghFilter(e.target.value); setPage(1); }}>
+          <option value="">All sanghs</option>
+          <option value="none">No sangh set</option>
+          {sanghs.map((sg) => (
+            <option key={sg.id} value={sg.id}>
+              {sg.name_en}{sg.members_count ? ` (${sg.members_count})` : ''}
+            </option>
+          ))}
+        </select>
         <label className="field-check" style={{ margin: 0 }}>
           <input type="checkbox" checked={hindiMissing}
             onChange={(e) => { setHindiMissing(e.target.checked); setPage(1); }} />
           <span>No Hindi name</span>
         </label>
+        <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+          aria-label="Rows per page">
+          <option value={25}>25 / page</option>
+          <option value={100}>100 / page</option>
+          <option value={200}>200 / page</option>
+        </select>
         <div className="grow" />
         <button className="btn" onClick={() => setShowImport(true)}>Import list</button>
         <button className="btn" disabled={selected.length === 0} onClick={() => setShowBulk(true)}>
           Set location{selected.length ? ` (${selected.length})` : ''}
+        </button>
+        <button className="btn" disabled={selected.length === 0} onClick={() => setShowBulkSangh(true)}>
+          Set sangh{selected.length ? ` (${selected.length})` : ''}
+        </button>
+        {/* The seeded directory (migration 049) lands unverified on purpose, so
+            publishing it one row at a time would be a few thousand clicks and
+            therefore would not happen. Explicit selection only — there is no
+            "verify everything matching this filter", because the unverified
+            state exists precisely so that somebody reads them. */}
+        <button className="btn" disabled={selected.length === 0} onClick={() => run(
+          () => api('/admin/maharaj/bulk-verify', {
+            method: 'POST', body: { sant_ids: selected, verified: true },
+          }).then(() => setSelected([])),
+          `${selected.length} verified — now visible to devotees.`,
+        )}>
+          Verify{selected.length ? ` (${selected.length})` : ''}
         </button>
         <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add Sadhu-Sadhvi</button>
       </div>
@@ -164,7 +213,7 @@ export function MaharajPage() {
                   ? rows.filter((r) => !r.is_samadhistha).map((r) => r.id)
                   : [])} />
             </th>
-            <th>Name</th><th>Hindi</th><th>Type</th><th>Reps</th><th>City / State</th>
+            <th>Name</th><th>Hindi</th><th>Type</th><th>Sangh</th><th>Reps</th><th>City / State</th>
             <th>Followers</th><th>Status</th><th></th>
           </tr>
         </thead>
@@ -190,12 +239,44 @@ export function MaharajPage() {
                 {m.pad && m.pad !== 'none' ? <div className="muted" style={{ fontSize: 11 }}>{m.pad}</div> : null}
               </td>
               <td>
+                {m.sangh_name
+                  ? <>
+                      {m.sangh_name}
+                      {m.is_sangh_head && (
+                        <div style={{ fontSize: 11, color: '#b45309' }}>head</div>
+                      )}
+                    </>
+                  : <span className="muted">— not set</span>}
+              </td>
+              <td>
                 {m.is_samadhistha ? <span className="muted">—</span> : (m.reps_count ?? 0)}
                 {m.pending_rep_requests
                   ? <div style={{ fontSize: 11, color: '#b45309' }}>{m.pending_rep_requests} waiting</div>
                   : null}
               </td>
-              <td>{[m.current_city ?? m.city, m.state].filter(Boolean).join(', ') || '—'}</td>
+              {/* Both halves come from the SAME place or neither does. Pairing
+                  `current_city` with `state` printed "Sangli, Jammu and Kashmir"
+                  — the city they have travelled to beside the state they are
+                  based in, a place that does not exist. When an ascetic is away
+                  from their base the row says so, so a curator can tell the two
+                  readings apart instead of guessing. */}
+              <td>{(() => {
+                const away = !!m.current_city;
+                const city = away ? m.current_city : m.city;
+                const st = away ? m.current_state : m.state;
+                const place = [city, st].filter(Boolean).join(', ');
+                if (!place) return '—';
+                return (
+                  <>
+                    {place}
+                    {away && (m.city || m.state) && (
+                      <div className="muted" style={{ fontSize: 11 }}>
+                        based in {[m.city, m.state].filter(Boolean).join(', ')}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}</td>
               <td>{m.followers_count}</td>
               <td>
                 {m.is_samadhistha
@@ -219,10 +300,10 @@ export function MaharajPage() {
               </td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={9} className="muted">No profiles found.</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={10} className="muted">No profiles found.</td></tr>}
         </tbody>
       </table>
-      {meta && <Pagination page={page} total={meta.total} limit={25} onPage={setPage} />}
+      {meta && <Pagination page={page} total={meta.total} limit={limit} onPage={setPage} />}
 
       {showCreate && (
         <Modal title="Add Sadhu-Sadhvi" onClose={() => setShowCreate(false)}>
@@ -239,6 +320,15 @@ export function MaharajPage() {
           <BulkLocationForm
             santIds={selected}
             onDone={(msg) => { setShowBulk(false); setSelected([]); load(); toast.show(msg); }}
+          />
+        </Modal>
+      )}
+      {showBulkSangh && (
+        <Modal title={`Set sangh for ${selected.length} Sadhu-Sadhvi`} onClose={() => setShowBulkSangh(false)}>
+          <BulkSanghForm
+            santIds={selected}
+            sanghs={sanghs}
+            onDone={(msg) => { setShowBulkSangh(false); setSelected([]); load(); loadSanghs(); toast.show(msg); }}
           />
         </Modal>
       )}
@@ -422,16 +512,16 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
       <label className="field"><span>Guru name</span><input value={form.guru_name} onChange={set('guru_name')} /></label>
       <label className="field"><span>Bio</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
       <PhotoPicker value={form.photo_base64} onChange={(v) => setForm({ ...form, photo_base64: v })} />
-      {/* THE HANDOVER. Whoever is named here becomes the profile's sant admin:
-          they can then add and remove the other representatives themselves,
+      {/* THE HANDOVER. Whoever is named here becomes the profile's Sanghpati admin:
+          they can then add and remove the other sangh representatives themselves,
           without coming back to us. Leaving it blank creates a profile nobody
-          can manage until somebody is added from the Representatives tab. */}
-      <label className="field"><span>Sant admin mobile (their login)</span>
+          can manage until somebody is added from the Sangh Representatives tab. */}
+      <label className="field"><span>Sanghpati admin mobile (their login)</span>
         <input value={form.rep_mobile} onChange={set('rep_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" />
       </label>
       <p className="muted" style={{ fontSize: 12, marginTop: -8 }}>
-        They are invited by WhatsApp or SMS and become the sant admin, who manages the other
-        representatives. Leave blank for a historical record with no representative.
+        They are invited by WhatsApp or SMS and become the Sanghpati admin, who manages the other
+        sangh representatives. Leave blank for a historical record with no sangh representative.
       </p>
       <label className="field-check">
         <input type="checkbox" checked={form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
@@ -443,7 +533,7 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
 
 interface Rep {
   id: string; mobile: string; name: string | null; user_id: string | null;
-  /** admin = the sant admin, who manages the rest themselves (migration 044). */
+  /** admin = the Sanghpati admin, who manages the rest themselves (migration 044). */
   role: 'admin' | 'rep';
   /** Null until an invite message actually left the building — see migration 043. */
   invite_sent_at: string | null; invite_channel: string | null; invite_error: string | null;
@@ -485,7 +575,7 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
     <div>
       {/* A memorial is deliberately still here and still visible to devotees.
           Saying so is what stops a curator reading the missing actions as a
-          fault and re-adding a representative to "fix" it. */}
+          fault and re-adding a sangh representative to "fix" it. */}
       {p.is_samadhistha && (
         <div style={{
           marginBottom: 16, padding: 12, borderRadius: 8,
@@ -495,7 +585,7 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
             Samadhistha{p.samadhi_date ? ` — ${p.samadhi_date.slice(0, 10)}` : ' — date not recorded'}
           </strong>
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
-            This profile is a record. It has no representatives and no current location, and stays
+            This profile is a record. It has no sangh representatives and no current location, and stays
             fully visible to devotees. Reverse it on the Samadhi tab if it was entered by mistake.
           </p>
         </div>
@@ -506,7 +596,7 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
           <button key={t} className={`btn sm ${tab === t ? 'primary' : ''}`} onClick={() => setTab(t)}>
             {t === 'details' ? 'Details'
               : t === 'location' ? 'Location'
-              : t === 'reps' ? `Representatives${p.rep_requests?.some((r) => r.status === 'pending') ? ' •' : ''}`
+              : t === 'reps' ? `Sangh Representatives${p.rep_requests?.some((r) => r.status === 'pending') ? ' •' : ''}`
               : 'Samadhi'}
           </button>
         ))}
@@ -641,7 +731,7 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
 
       <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid #e2e8f0' }} />
       <button className="btn sm danger" onClick={async () => {
-        if (confirm(`Delete ${p.name}? This removes the profile, its locations, followers and representative links.`)) {
+        if (confirm(`Delete ${p.name}? This removes the profile, its locations, followers and sangh representative links.`)) {
           await api(`/admin/maharaj/${p.id}`, { method: 'DELETE' });
           onDeleted();
         }
@@ -718,8 +808,8 @@ function RepsTab({ p, onChanged, onToast }: {
         { method: 'POST', body: { mobile, name: name || undefined, role: asAdmin || !hasAdmin ? 'admin' : 'rep' } },
       );
       setMobile(''); setName(''); setAsAdmin(false); onChanged();
-      if (data?.invite_sent) onToast(`Representative added — invite sent by ${data.invite_channel ?? 'message'}.`);
-      else onToast(`Representative added, but the invite could not be sent (${data?.invite_error ?? 'unknown reason'}). They can still sign in with this number.`, 'bad');
+      if (data?.invite_sent) onToast(`Sangh Representative added — invite sent by ${data.invite_channel ?? 'message'}.`);
+      else onToast(`Sangh Representative added, but the invite could not be sent (${data?.invite_error ?? 'unknown reason'}). They can still sign in with this number.`, 'bad');
     } catch (err) { setError(err); } finally { setBusy(false); }
   }
 
@@ -735,8 +825,8 @@ function RepsTab({ p, onChanged, onToast }: {
   }
 
   /**
-   * Make somebody the sant admin — the Super Admin's override of a handover the
-   * sant admin can normally do themselves.
+   * Make somebody the Sanghpati admin — the Super Admin's override of a handover the
+   * Sanghpati admin can normally do themselves.
    *
    * Needed precisely because the ordinary path requires the CURRENT admin to
    * act, and the cases that reach us are the ones where they cannot: a phone
@@ -744,14 +834,14 @@ function RepsTab({ p, onChanged, onToast }: {
    * answering. Promoting demotes the incumbent in the same transaction.
    */
   async function setRole(rep: Rep, role: 'admin' | 'rep') {
-    const verb = role === 'admin' ? 'make the sant admin' : 'demote to a plain representative';
+    const verb = role === 'admin' ? 'make the Sanghpati admin' : 'demote to a plain sangh representative';
     if (!confirm(`${rep.name || rep.mobile} — ${verb}?${
-      role === 'admin' && hasAdmin ? '\n\nThe current sant admin becomes a plain representative.' : ''
+      role === 'admin' && hasAdmin ? '\n\nThe current Sanghpati admin becomes a plain sangh representative.' : ''
     }`)) return;
     try {
       await api(`/admin/maharaj/${p.id}/reps/${rep.id}/role`, { method: 'PATCH', body: { role } });
       onChanged();
-      onToast(role === 'admin' ? `${rep.name || rep.mobile} is now the sant admin.` : 'Role updated.');
+      onToast(role === 'admin' ? `${rep.name || rep.mobile} is now the Sanghpati admin.` : 'Role updated.');
     } catch (err) { setError(err); }
   }
 
@@ -759,7 +849,7 @@ function RepsTab({ p, onChanged, onToast }: {
     try {
       await api(`/admin/maharaj/rep-requests/${req.id}/${decision}`, { method: 'POST' });
       onChanged();
-      onToast(decision === 'approve' ? 'Approved — the representative has been invited.' : 'Request rejected.');
+      onToast(decision === 'approve' ? 'Approved — the sangh representative has been invited.' : 'Request rejected.');
     } catch (err) { setError(err); }
   }
 
@@ -791,9 +881,9 @@ function RepsTab({ p, onChanged, onToast }: {
   if (p.is_samadhistha) {
     return (
       <p className="muted">
-        This ascetic has attained samadhi, so the profile is a record and has no representatives.
+        This ascetic has attained samadhi, so the profile is a record and has no sangh representatives.
         Reverse the samadhi record on the Samadhi tab if it was entered by mistake — the previous
-        representatives are not restored automatically and would need re-inviting.
+        sangh representatives are not restored automatically and would need re-inviting.
       </p>
     );
   }
@@ -801,19 +891,19 @@ function RepsTab({ p, onChanged, onToast }: {
   return (
     <div>
       <p className="muted" style={{ marginBottom: 12 }}>
-        Logins that can manage this profile. The <strong>sant admin</strong> adds and removes the
+        Logins that can manage this profile. The <strong>Sanghpati admin</strong> adds and removes the
         others themselves, without coming back here.
       </p>
       <ErrorBox error={error} />
 
       {!hasAdmin && (
         <p style={{ color: '#b45309', fontSize: 13, marginBottom: 12 }}>
-          No sant admin. Nobody can add representatives to this profile from the sant portal until
-          one is named — the first person added below becomes the sant admin.
+          No Sanghpati admin. Nobody can add sangh representatives to this profile from the sant portal until
+          one is named — the first person added below becomes the Sanghpati admin.
         </p>
       )}
 
-      {/* Requests a sant admin has not acted on. Shown here because we are the
+      {/* Requests a Sanghpati admin has not acted on. Shown here because we are the
           escalation path: an admin who has gone quiet leaves these with nobody
           able to decide them. */}
       {pendingRequests.length > 0 && (
@@ -822,7 +912,7 @@ function RepsTab({ p, onChanged, onToast }: {
           background: '#fffbeb', border: '1px solid #fde68a',
         }}>
           <strong style={{ fontSize: 13 }}>
-            {pendingRequests.length} request(s) waiting for the sant admin
+            {pendingRequests.length} request(s) waiting for the Sanghpati admin
           </strong>
           <table className="data" style={{ marginTop: 8 }}>
             <tbody>
@@ -854,8 +944,8 @@ function RepsTab({ p, onChanged, onToast }: {
               <td>{r.name ?? <span className="muted">—</span>}</td>
               <td>
                 {r.role === 'admin'
-                  ? <strong>Sant admin</strong>
-                  : <span className="muted">Representative</span>}
+                  ? <strong>Sanghpati admin</strong>
+                  : <span className="muted">Sangh Representative</span>}
               </td>
               <td>{status(r)}</td>
               <td>
@@ -868,25 +958,25 @@ function RepsTab({ p, onChanged, onToast }: {
                 )}
                 {r.role !== 'admin' && (
                   <>
-                    <button className="btn sm" onClick={() => setRole(r, 'admin')}>Make sant admin</button>{' '}
+                    <button className="btn sm" onClick={() => setRole(r, 'admin')}>Make Sanghpati admin</button>{' '}
                   </>
                 )}
-                {/* No Remove on the sant admin: the API refuses it (409
+                {/* No Remove on the Sanghpati admin: the API refuses it (409
                     LAST_ADMIN) because a profile with no admin is one nobody
                     can add anybody to. Hand the role over first. */}
                 {r.role !== 'admin' && (
                   <button className="btn sm danger" onClick={async () => {
-                    if (confirm('Remove this representative?')) {
+                    if (confirm('Remove this sangh representative?')) {
                       await api(`/admin/maharaj/${p.id}/reps/${r.id}`, { method: 'DELETE' });
                       onChanged();
-                      onToast('Representative removed.');
+                      onToast('Sangh Representative removed.');
                     }
                   }}>Remove</button>
                 )}
               </td>
             </tr>
           ))}
-          {p.reps.length === 0 && <tr><td colSpan={5} className="muted">No representatives yet.</td></tr>}
+          {p.reps.length === 0 && <tr><td colSpan={5} className="muted">No sangh representatives yet.</td></tr>}
         </tbody>
       </table>
 
@@ -900,11 +990,11 @@ function RepsTab({ p, onChanged, onToast }: {
             onChange={(e) => setAsAdmin(e.target.checked)} />
           <span>
             {hasAdmin
-              ? 'Make them the sant admin (the current one becomes a plain representative)'
-              : 'They become the sant admin — this profile has none'}
+              ? 'Make them the Sanghpati admin (the current one becomes a plain sangh representative)'
+              : 'They become the Sanghpati admin — this profile has none'}
           </span>
         </label>
-        <div className="actions"><button className="btn primary" type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add representative'}</button></div>
+        <div className="actions"><button className="btn primary" type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add sangh representative'}</button></div>
       </form>
     </div>
   );
@@ -915,7 +1005,7 @@ function RepsTab({ p, onChanged, onToast }: {
  * mistake.
  *
  * ITS OWN TAB, not a field on the details form, because it is not a field
- * edit: applying it detaches every representative, retires the current
+ * edit: applying it detaches every sangh representative, retires the current
  * location and closes any open request. That must never happen as a side
  * effect of somebody fixing a typo in a bio, and the person doing it needs to
  * have read what it will do.
@@ -932,7 +1022,7 @@ function SamadhiTab({ p, onDone, onToast }: {
     const repCount = p.reps?.length ?? 0;
     if (!clear && !confirm(
       `Record samadhi for ${p.name_en || p.name}${date ? ` on ${date}` : ', with no date'}?\n\n` +
-      `This detaches ${repCount} representative(s), retires the current location and closes any ` +
+      `This detaches ${repCount} sangh representative(s), retires the current location and closes any ` +
       `pending request. The profile stays visible to devotees.`,
     )) return;
     setBusy(true); setError(null);
@@ -955,7 +1045,7 @@ function SamadhiTab({ p, onDone, onToast }: {
       <p className="muted" style={{ marginBottom: 12 }}>
         Recording samadhi turns this profile into a record: it keeps its history, its chaturmas
         entries and its anniversary dates, and stays fully visible in the devotee directory — but
-        it has no representatives and no current whereabouts. The devotee app can filter on it.
+        it has no sangh representatives and no current whereabouts. The devotee app can filter on it.
       </p>
       <label className="field"><span>Samadhi date <em style={{ fontWeight: 400 }}>— if known</em></span>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -985,7 +1075,7 @@ function SamadhiTab({ p, onDone, onToast }: {
       {p.is_samadhistha && (
         <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
           Reversing this restores the profile to a living one, but does <strong>not</strong> bring
-          the representatives back — their access was removed and re-inviting them is a deliberate act.
+          the sangh representatives back — their access was removed and re-inviting them is a deliberate act.
         </p>
       )}
     </div>
@@ -999,6 +1089,65 @@ function SamadhiTab({ p, onDone, onToast }: {
  * same reason: a group arrives in one town on one day, and retyping the place
  * and pin for each member is how one of them ends up in the wrong district.
  */
+/**
+ * File a set of ascetics into a sangh, or take them out of one.
+ *
+ * Bulk because that is how a sangh is actually curated — a list of forty
+ * arrives at once, and forty passes through the single-profile form is not how
+ * anybody will do it.
+ */
+function BulkSanghForm({ santIds, sanghs, onDone }: {
+  santIds: string[]; sanghs: Sangh[]; onDone: (msg: string) => void;
+}) {
+  const [sanghId, setSanghId] = useState('');
+  const [asHead, setAsHead] = useState(false);
+
+  return (
+    <ActionForm submitLabel={`Set sangh for ${santIds.length}`} onDone={() => { /* handled below */ }}
+      successMessage={null}
+      onSubmit={async () => {
+        const { data } = await api<{ updated: number }>('/admin/sanghs/members', {
+          method: 'POST',
+          body: {
+            // '' is the deliberate "remove from sangh" choice, sent as null.
+            sangh_id: sanghId || null,
+            sant_ids: santIds,
+            as_head: sanghId ? asHead : false,
+          },
+        });
+        const name = sanghs.find((sg) => sg.id === sanghId)?.name_en;
+        onDone(sanghId
+          ? `${data.updated} moved into ${name ?? 'the sangh'}${asHead ? ' as head' : ''}.`
+          : `${data.updated} removed from their sangh.`);
+      }}>
+      <label className="field">
+        <span>Sangh</span>
+        <select value={sanghId} onChange={(e) => setSanghId(e.target.value)}>
+          <option value="">— remove from sangh —</option>
+          {sanghs.map((sg) => (
+            <option key={sg.id} value={sg.id}>
+              {sg.name_en}{sg.parampara ? ` · ${sg.parampara}` : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      {/* A sangh has several heads at once — an Acharya who has handed the pad
+          on, the Upadhyaya and the Aryika leading their own groups — so this is
+          a plain flag, never a swap that demotes whoever currently holds it. */}
+      <label className="field-check">
+        <input type="checkbox" checked={asHead} disabled={!sanghId}
+          onChange={(e) => setAsHead(e.target.checked)} />
+        <span>Mark as head of this sangh</span>
+      </label>
+      {sanghs.length === 0 && (
+        <p className="muted" style={{ fontSize: 12 }}>
+          No sanghs exist yet. Create one on the Sanghs page first.
+        </p>
+      )}
+    </ActionForm>
+  );
+}
+
 function BulkLocationForm({ santIds, onDone }: { santIds: string[]; onDone: (msg: string) => void }) {
   const [form, setForm] = useState({
     place: '', state: '', city: '', from_date: '', to_date: '', chaturmas: false, notes: '',

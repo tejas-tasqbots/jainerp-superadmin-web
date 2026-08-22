@@ -60,16 +60,16 @@ const FIELD_LABELS: Record<string, string> = {
 /**
  * Requests whose approval does more than write the column.
  *
- * Approving a samadhi date detaches every representative, retires the current
+ * Approving a samadhi date detaches every sangh representative, retires the current
  * location and closes any open rep request — see MaharajModerationService
  * .setSamadhi. A reviewer clicking Approve on a one-line diff has no way to
  * know that, so the modal says it.
  */
 const SIDE_EFFECTS: Record<string, string> = {
   samadhi_date:
-    'Approving this also removes every representative from the profile, retires its current ' +
-    'location and closes any pending request to add a representative. The profile itself is ' +
-    'kept and stays visible to devotees. The representatives are NOT restored if the date is ' +
+    'Approving this also removes every sangh representative from the profile, retires its current ' +
+    'location and closes any pending request to add a sangh representative. The profile itself is ' +
+    'kept and stays visible to devotees. The sangh representatives are NOT restored if the date is ' +
     'later cleared.',
 };
 
@@ -238,7 +238,7 @@ export function ChangeRequestsPage() {
           <label className="field">
             {/* Whoever raised it is who reads the reason, and this queue holds
                 both mandirs and ascetics — telling a Sadhu-Sadhvi's
-                representative that "the mandir" will see it is simply wrong. */}
+                sangh representative that "the mandir" will see it is simply wrong. */}
             <span>
               {review.mode === 'reject'
                 ? `Why (the ${subjectWord(review.row)} sees this)`
