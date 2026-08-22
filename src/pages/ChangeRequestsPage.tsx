@@ -49,7 +49,39 @@ const FIELD_LABELS: Record<string, string> = {
   fssai_license: 'FSSAI licence',
   samuday: 'Samuday',
   guru_name: 'Guru',
+  // Migration 044 made the ascetic's name requestable in both scripts, and
+  // samadhi_date requestable at all. Without these the queue showed the raw
+  // column name to the person deciding.
+  name_en: 'Name (English)',
+  name_hi: 'Name (Hindi)',
+  samadhi_date: 'Samadhi date',
 };
+
+/**
+ * Requests whose approval does more than write the column.
+ *
+ * Approving a samadhi date detaches every representative, retires the current
+ * location and closes any open rep request — see MaharajModerationService
+ * .setSamadhi. A reviewer clicking Approve on a one-line diff has no way to
+ * know that, so the modal says it.
+ */
+const SIDE_EFFECTS: Record<string, string> = {
+  samadhi_date:
+    'Approving this also removes every representative from the profile, retires its current ' +
+    'location and closes any pending request to add a representative. The profile itself is ' +
+    'kept and stays visible to devotees. The representatives are NOT restored if the date is ' +
+    'later cleared.',
+};
+
+/**
+ * What to call the subject of a request in prose.
+ *
+ * The queue holds tenant and ascetic requests side by side, and the modal was
+ * written when it held only the first.
+ */
+function subjectWord(r: Pick<ChangeRequest, 'subject_type'>): string {
+  return r.subject_type === 'tenant' ? 'mandir' : 'ascetic';
+}
 
 export function ChangeRequestsPage() {
   const [rows, setRows] = useState<ChangeRequest[]>([]);
@@ -189,13 +221,29 @@ export function ChangeRequestsPage() {
             {review.row.current_value || '—'} → <strong>{review.row.requested_value}</strong>
           </p>
           {review.row.reason && <p className="muted">Reason given: {review.row.reason}</p>}
+          {review.mode === 'approve' && SIDE_EFFECTS[review.row.field] && (
+            <p style={{
+              margin: '8px 0', padding: 10, borderRadius: 8,
+              background: '#fffbeb', border: '1px solid #fde68a', fontSize: 13,
+            }}>
+              <strong>This is not only a field change.</strong>{' '}
+              {SIDE_EFFECTS[review.row.field]}
+            </p>
+          )}
           {review.mode === 'approve' && (
             <p className="muted">
-              This writes the new value to the mandir's profile straight away.
+              This writes the new value to the {subjectWord(review.row)}'s profile straight away.
             </p>
           )}
           <label className="field">
-            <span>{review.mode === 'reject' ? 'Why (the mandir sees this)' : 'Note (optional)'}</span>
+            {/* Whoever raised it is who reads the reason, and this queue holds
+                both mandirs and ascetics — telling a Sadhu-Sadhvi's
+                representative that "the mandir" will see it is simply wrong. */}
+            <span>
+              {review.mode === 'reject'
+                ? `Why (the ${subjectWord(review.row)} sees this)`
+                : 'Note (optional)'}
+            </span>
             <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
           </label>
           <div className="actions">
