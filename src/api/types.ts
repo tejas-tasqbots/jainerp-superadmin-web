@@ -260,10 +260,11 @@ export interface MaharajProfile {
    */
   pad: string | null;
   /**
-   * Set once the ascetic has attained samadhi. The profile becomes a record:
-   * it keeps its history and stays visible, but has no representatives and no
-   * current location. `is_samadhistha` is the derived boolean the API sends so
-   * no client has to rediscover that rule.
+   * `is_samadhistha` is the state (migration 045); `samadhi_date` is optional
+   * detail. Most historical entries record that an ascetic attained samadhi and
+   * nothing more, so NEVER infer the state from the date — the profile is then
+   * a record: it keeps its history and stays visible, but has no
+   * representatives and no current location.
    */
   samadhi_date: string | null;
   is_samadhistha: boolean;

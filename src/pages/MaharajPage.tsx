@@ -491,10 +491,12 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
           marginBottom: 16, padding: 12, borderRadius: 8,
           background: '#f8fafc', border: '1px solid #e2e8f0',
         }}>
-          <strong style={{ fontSize: 13 }}>Samadhistha — {p.samadhi_date?.slice(0, 10)}</strong>
+          <strong style={{ fontSize: 13 }}>
+            Samadhistha{p.samadhi_date ? ` — ${p.samadhi_date.slice(0, 10)}` : ' — date not recorded'}
+          </strong>
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
             This profile is a record. It has no representatives and no current location, and stays
-            fully visible to devotees. Clear the date on the Samadhi tab if it was entered by mistake.
+            fully visible to devotees. Reverse it on the Samadhi tab if it was entered by mistake.
           </p>
         </div>
       )}
@@ -790,7 +792,7 @@ function RepsTab({ p, onChanged, onToast }: {
     return (
       <p className="muted">
         This ascetic has attained samadhi, so the profile is a record and has no representatives.
-        Clear the samadhi date on the Samadhi tab if it was entered by mistake — the previous
+        Reverse the samadhi record on the Samadhi tab if it was entered by mistake — the previous
         representatives are not restored automatically and would need re-inviting.
       </p>
     );
@@ -929,7 +931,7 @@ function SamadhiTab({ p, onDone, onToast }: {
   async function save(clear: boolean) {
     const repCount = p.reps?.length ?? 0;
     if (!clear && !confirm(
-      `Record samadhi for ${p.name_en || p.name} on ${date}?\n\n` +
+      `Record samadhi for ${p.name_en || p.name}${date ? ` on ${date}` : ', with no date'}?\n\n` +
       `This detaches ${repCount} representative(s), retires the current location and closes any ` +
       `pending request. The profile stays visible to devotees.`,
     )) return;
@@ -937,10 +939,13 @@ function SamadhiTab({ p, onDone, onToast }: {
     try {
       await api(`/admin/maharaj/${p.id}/samadhi`, {
         method: 'PATCH',
-        body: { samadhi_date: clear ? null : date, tithi_note: tithi || undefined },
+        // The state is sent explicitly. Deriving it from the date was what made
+        // an undated samadhi unrecordable — and the historical part of a real
+        // sant list, which is most of it, has no dates at all.
+        body: { samadhi: !clear, samadhi_date: clear || !date ? null : date, tithi_note: tithi || undefined },
       });
       onDone();
-      onToast(clear ? 'Samadhi date cleared.' : 'Recorded.');
+      onToast(clear ? 'Reversed — the profile is a living one again.' : 'Recorded.');
     } catch (err) { setError(err); } finally { setBusy(false); }
   }
 
@@ -952,9 +957,14 @@ function SamadhiTab({ p, onDone, onToast }: {
         entries and its anniversary dates, and stays fully visible in the devotee directory — but
         it has no representatives and no current whereabouts. The devotee app can filter on it.
       </p>
-      <label className="field"><span>Samadhi date</span>
+      <label className="field"><span>Samadhi date <em style={{ fontWeight: 400 }}>— if known</em></span>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
       </label>
+      <p className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 12 }}>
+        Leave this empty when the date was never recorded — the normal case for historical entries.
+        What matters is that the profile stops reading as living; a date can be added later without
+        changing anything else. Never enter an approximate one.
+      </p>
       <label className="field"><span>Tithi (as observed)</span>
         <input value={tithi} onChange={(e) => setTithi(e.target.value)} placeholder="e.g. Kartik Krishna 14" />
       </label>
@@ -963,18 +973,18 @@ function SamadhiTab({ p, onDone, onToast }: {
         tithi-to-date varies by panchang and region.
       </p>
       <div className="actions" style={{ marginTop: 12 }}>
-        <button className="btn primary" disabled={busy || !date} onClick={() => save(false)}>
-          {busy ? 'Saving…' : 'Record samadhi'}
+        <button className="btn primary" disabled={busy} onClick={() => save(false)}>
+          {busy ? 'Saving…' : date ? 'Record samadhi' : 'Record samadhi — date not known'}
         </button>{' '}
         {p.is_samadhistha && (
           <button className="btn" disabled={busy} onClick={() => save(true)}>
-            Clear — entered by mistake
+            Reverse — entered by mistake
           </button>
         )}
       </div>
       {p.is_samadhistha && (
         <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-          Clearing the date restores the profile to a living one, but does <strong>not</strong> bring
+          Reversing this restores the profile to a living one, but does <strong>not</strong> bring
           the representatives back — their access was removed and re-inviting them is a deliberate act.
         </p>
       )}
@@ -1150,15 +1160,22 @@ function ImportForm({ onDone }: { onDone: () => void }) {
       <p className="muted" style={{ marginBottom: 8 }}>
         Paste CSV (first row = column names) or a JSON array. Columns:{' '}
         <code>name_en, name_hi, type, pad, sect, sub_sect, samuday, city, state, diksha_year,
-        guru_name, bio, samadhi_date, tithi_note, rep_mobile, rep_name</code>. At least one of
-        name_en / name_hi is required per row.
+        guru_name, bio, samadhi, samadhi_date, tithi_note, rep_mobile, rep_name</code>. At least one
+        of name_en / name_hi is required per row.
+      </p>
+      <p className="muted" style={{ marginBottom: 8, fontSize: 12 }}>
+        <code>samadhi</code> takes <code>true</code>/<code>false</code> and is what marks an entry as
+        a memorial — set it for every ascetic the list records as having attained samadhi, whether or
+        not <code>samadhi_date</code> is known. A list whose status column says so but carries no
+        date is the usual shape, and leaving those rows unmarked files them as living: devotees then
+        set out for a darshan that cannot happen.
       </p>
       <textarea
         value={text}
         onChange={(e) => { setText(e.target.value); setPreview(null); }}
         rows={10}
         style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
-        placeholder={'name_en,name_hi,type,sect,samadhi_date\nAcharya Vidyasagar Ji,आचार्य विद्यासागर जी,muni,digambar,2024-02-17'}
+        placeholder={'name_en,name_hi,type,pad,sect,samadhi,samadhi_date\nAcharya Vidyasagar Ji,आचार्य विद्यासागर जी,muni,acharya,digambar,true,2024-02-17\nMuni Shri Kshama Sagar Ji,मुनिश्री क्षमासागर जी,muni,none,digambar,true,'}
       />
       <label className="field-check">
         <input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} />
