@@ -229,7 +229,15 @@ export interface Devotee {
 export interface MaharajProfile {
   id: string;
   rep_user_id: string | null;
+  /**
+   * The canonical display value every reader falls back to. Migration 044 added
+   * `name_en` and `name_hi`; this stays because audit rows, comms templates and
+   * clients in the field all read it, and it is never empty.
+   */
   name: string;
+  /** Latin and Devanagari. Either may be null — readers fall back to the other. */
+  name_en: string | null;
+  name_hi: string | null;
   // The canonical RANK, which is what the column stores and what migration 024's
   // CHECK enforces. It previously read `'maharaj' | 'mataji'` — two values the
   // API can no longer send and the database actively rejects. Nothing caught it
@@ -246,6 +254,23 @@ export interface MaharajProfile {
   sect: 'digambar' | 'shwetambar' | null;
   /** Panth/gaccha (Terapanth, Bisapanth, Tapagachha…). Free text by design. */
   sub_sect: string | null;
+  /**
+   * Post held — a POST, not the rank (migration 039, widened by 044). An
+   * Acharya is still a Muni, which is why this is a separate column.
+   */
+  pad: string | null;
+  /**
+   * Set once the ascetic has attained samadhi. The profile becomes a record:
+   * it keeps its history and stays visible, but has no representatives and no
+   * current location. `is_samadhistha` is the derived boolean the API sends so
+   * no client has to rediscover that rule.
+   */
+  samadhi_date: string | null;
+  is_samadhistha: boolean;
+  /** How many people can act for this profile — the moderation queue reads it. */
+  reps_count: number;
+  /** Requests a sant admin has not decided. Non-zero means somebody is waiting. */
+  pending_rep_requests: number;
   city: string | null;
   state: string | null;
   current_city: string | null;

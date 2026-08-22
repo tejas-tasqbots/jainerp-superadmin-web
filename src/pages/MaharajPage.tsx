@@ -6,12 +6,36 @@ import { PhotoPicker } from '../components/PhotoPicker';
 import { StateSelect, CitySelect } from '../components/GeoSelect';
 import { LocationPicker } from '../components/LocationPicker';
 
+/** One row of the cross-profile queue. */
+interface GlobalRepRequest {
+  id: string;
+  sant_id: string;
+  sant_name: string;
+  sant_name_hi: string | null;
+  mobile: string;
+  name: string | null;
+  reason: string | null;
+  requested_by_name: string | null;
+  requested_at: string;
+}
+
 export function MaharajPage() {
   const [rows, setRows] = useState<MaharajProfile[]>([]);
   const [meta, setMeta] = useState<ApiMeta | null>(null);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [verifiedFilter, setVerifiedFilter] = useState('');
+  // Living / samadhistha (migration 044). Unset shows BOTH here, unlike the
+  // devotee app: a moderation queue that hid memorials would hide the ones
+  // nobody has verified yet from the only person who can publish them.
+  const [statusFilter, setStatusFilter] = useState('');
+  // The readiness report for 044: who is still English-only, and therefore
+  // rendered in Latin script to every Hindi-reading devotee.
+  const [hindiMissing, setHindiMissing] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [queue, setQueue] = useState<GlobalRepRequest[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [manageId, setManageId] = useState<string | null>(null);
@@ -21,11 +45,36 @@ export function MaharajPage() {
     const params = new URLSearchParams({ page: String(page), limit: '25' });
     if (q) params.set('q', q);
     if (verifiedFilter) params.set('verified', verifiedFilter);
+    if (statusFilter) params.set('status', statusFilter);
+    if (hindiMissing) params.set('name_hi_missing', 'true');
     api<MaharajProfile[]>(`/admin/maharaj?${params}`)
       .then((r) => { setRows(r.data); setMeta(r.meta); })
       .catch(setError);
-  }, [page, q, verifiedFilter]);
+  }, [page, q, verifiedFilter, statusFilter, hindiMissing]);
   useEffect(load, [load]);
+
+  /**
+   * Requests waiting on a sant admin, across every profile.
+   *
+   * We are the escalation path. An admin whose phone is lost, or who has left
+   * the sangh, leaves requests nobody can decide — and without a cross-profile
+   * view nobody would ever know, because the only other place they appear is
+   * inside a profile somebody has to think to open.
+   */
+  const loadQueue = useCallback(() => {
+    api<GlobalRepRequest[]>('/admin/maharaj/rep-requests?status=pending')
+      .then((r) => setQueue(r.data ?? []))
+      .catch(() => { /* the directory below is the page; a queue failure is not fatal */ });
+  }, []);
+  useEffect(loadQueue, [loadQueue]);
+
+  async function decideQueued(req: GlobalRepRequest, decision: 'approve' | 'reject') {
+    await run(
+      () => api(`/admin/maharaj/rep-requests/${req.id}/${decision}`, { method: 'POST' }),
+      decision === 'approve' ? 'Approved — the representative has been invited.' : 'Request rejected.',
+    );
+    loadQueue();
+  }
 
   async function run(fn: () => Promise<unknown>, done?: string) {
     setError(null);
@@ -41,31 +90,119 @@ export function MaharajPage() {
       {toast.node}
       <h1>Sadhu-Sadhvi Directory</h1>
       <ErrorBox error={error} />
+
+      {queue.length > 0 && (
+        <div style={{
+          margin: '0 0 16px', padding: 12, borderRadius: 8,
+          background: '#fffbeb', border: '1px solid #fde68a',
+        }}>
+          <strong style={{ fontSize: 13 }}>
+            {queue.length} request(s) to add a representative are waiting on a sant admin
+          </strong>
+          <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
+            The sant admin normally decides these. Act here only when they cannot — a lost phone,
+            or somebody no longer with the sangh.
+          </p>
+          <table className="data">
+            <thead><tr><th>Sadhu-Sadhvi</th><th>Mobile</th><th>Name</th><th>Asked by</th><th>Waiting since</th><th></th></tr></thead>
+            <tbody>
+              {queue.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.sant_name_hi || r.sant_name}</td>
+                  <td className="mono">{r.mobile}</td>
+                  <td>{r.name ?? <span className="muted">—</span>}</td>
+                  <td className="muted">{r.requested_by_name ?? '—'}</td>
+                  <td className="muted">{formatDate(r.requested_at)}</td>
+                  <td>
+                    <button className="btn sm primary" onClick={() => decideQueued(r, 'approve')}>Approve</button>{' '}
+                    <button className="btn sm" onClick={() => decideQueued(r, 'reject')}>Reject</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="toolbar">
-        <input placeholder="Search name / samuday…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+        {/* Searches BOTH scripts — a curator looking for a Devanagari name used
+            to find nothing and add the ascetic a second time. */}
+        <input placeholder="Search name (either script) / samuday…" value={q}
+          onChange={(e) => { setQ(e.target.value); setPage(1); }} />
         <select value={verifiedFilter} onChange={(e) => { setVerifiedFilter(e.target.value); setPage(1); }}>
           <option value="">All</option>
           <option value="false">Pending verification</option>
           <option value="true">Verified</option>
         </select>
+        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+          <option value="">Living &amp; samadhistha</option>
+          <option value="living">Living only</option>
+          <option value="samadhistha">Samadhistha only</option>
+        </select>
+        <label className="field-check" style={{ margin: 0 }}>
+          <input type="checkbox" checked={hindiMissing}
+            onChange={(e) => { setHindiMissing(e.target.checked); setPage(1); }} />
+          <span>No Hindi name</span>
+        </label>
         <div className="grow" />
+        <button className="btn" onClick={() => setShowImport(true)}>Import list</button>
+        <button className="btn" disabled={selected.length === 0} onClick={() => setShowBulk(true)}>
+          Set location{selected.length ? ` (${selected.length})` : ''}
+        </button>
         <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add Sadhu-Sadhvi</button>
       </div>
 
       <table className="data">
         <thead>
-          <tr><th>Name</th><th>Type</th><th>Samuday</th><th>City / State</th><th>Followers</th><th>Verified</th><th>Registered</th><th></th></tr>
+          <tr>
+            <th style={{ width: 28 }}>
+              {/* Selecting a memorial would only ever produce SANT_SAMADHISTHA
+                  from the bulk endpoint, so they are not selectable at all. */}
+              <input type="checkbox"
+                checked={selected.length > 0 && selected.length === rows.filter((r) => !r.is_samadhistha).length}
+                onChange={(e) => setSelected(e.target.checked
+                  ? rows.filter((r) => !r.is_samadhistha).map((r) => r.id)
+                  : [])} />
+            </th>
+            <th>Name</th><th>Hindi</th><th>Type</th><th>Reps</th><th>City / State</th>
+            <th>Followers</th><th>Status</th><th></th>
+          </tr>
         </thead>
         <tbody>
           {rows.map((m) => (
             <tr key={m.id}>
-              <td>{m.name}</td>
-              <td className="capitalize">{m.type}</td>
-              <td>{m.samuday ?? <span className="muted">—</span>}</td>
+              <td>
+                {!m.is_samadhistha && (
+                  <input type="checkbox" checked={selected.includes(m.id)}
+                    onChange={() => setSelected((sel) =>
+                      sel.includes(m.id) ? sel.filter((x) => x !== m.id) : [...sel, m.id])} />
+                )}
+              </td>
+              <td>
+                {m.name_en || m.name}
+                {m.samuday ? <div className="muted" style={{ fontSize: 11 }}>{m.samuday}</div> : null}
+              </td>
+              {/* Its own column, not a subtitle: the readiness filter above is
+                  about the blanks in it, and a blank is only obvious in a column. */}
+              <td>{m.name_hi || <span className="muted">— not set</span>}</td>
+              <td className="capitalize">
+                {m.type}
+                {m.pad && m.pad !== 'none' ? <div className="muted" style={{ fontSize: 11 }}>{m.pad}</div> : null}
+              </td>
+              <td>
+                {m.is_samadhistha ? <span className="muted">—</span> : (m.reps_count ?? 0)}
+                {m.pending_rep_requests
+                  ? <div style={{ fontSize: 11, color: '#b45309' }}>{m.pending_rep_requests} waiting</div>
+                  : null}
+              </td>
               <td>{[m.current_city ?? m.city, m.state].filter(Boolean).join(', ') || '—'}</td>
               <td>{m.followers_count}</td>
-              <td><Badge value={m.verified} /></td>
-              <td>{formatDate(m.created_at)}</td>
+              <td>
+                {m.is_samadhistha
+                  ? <span className="muted">Samadhistha</span>
+                  : <Badge value={m.verified} />}
+                <div className="muted" style={{ fontSize: 11 }}>{formatDate(m.created_at)}</div>
+              </td>
               <td>
                 <button className="btn sm" onClick={() => setManageId(m.id)}>Manage</button>{' '}
                 {!m.verified ? (
@@ -82,7 +219,7 @@ export function MaharajPage() {
               </td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={8} className="muted">No profiles found.</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={9} className="muted">No profiles found.</td></tr>}
         </tbody>
       </table>
       {meta && <Pagination page={page} total={meta.total} limit={25} onPage={setPage} />}
@@ -90,6 +227,19 @@ export function MaharajPage() {
       {showCreate && (
         <Modal title="Add Sadhu-Sadhvi" onClose={() => setShowCreate(false)}>
           <MaharajCreateForm onDone={() => { setShowCreate(false); load(); toast.show('Profile created.'); }} />
+        </Modal>
+      )}
+      {showImport && (
+        <Modal title="Import a sant list" onClose={() => setShowImport(false)}>
+          <ImportForm onDone={() => { setShowImport(false); load(); }} />
+        </Modal>
+      )}
+      {showBulk && (
+        <Modal title={`Set location for ${selected.length} Sadhu-Sadhvi`} onClose={() => setShowBulk(false)}>
+          <BulkLocationForm
+            santIds={selected}
+            onDone={(msg) => { setShowBulk(false); setSelected([]); load(); toast.show(msg); }}
+          />
         </Modal>
       )}
       {manageId && (
@@ -128,10 +278,61 @@ const SECTS: { value: string; label: string }[] = [
   { value: 'shwetambar', label: 'Shwetambar' },
 ];
 
+/**
+ * Posts (pad) — migration 039, widened by 044.
+ *
+ * A POST, not a rank: an Acharya is still a Muni. The original four were all
+ * Digambara-leaning, so the whole Shwetambar hierarchy (Panyas, Gani,
+ * Pravartak, Pravartini, Mahattara, Sadhvi Pramukha) had to be filed as 'none'
+ * with the post buried in free-text `honours`, where the directory cannot
+ * filter on it. `sects` narrows the picker so a curator is never offered a post
+ * the ascetic's own tradition does not confer.
+ */
+const PADS: { value: string; label: string; sects: string[] }[] = [
+  { value: 'none', label: '—', sects: ['digambar', 'shwetambar'] },
+  { value: 'acharya', label: 'Acharya', sects: ['digambar', 'shwetambar'] },
+  { value: 'upadhyaya', label: 'Upadhyaya', sects: ['digambar', 'shwetambar'] },
+  { value: 'elacharya', label: 'Elacharya', sects: ['digambar'] },
+  { value: 'ganini', label: 'Ganini', sects: ['digambar'] },
+  { value: 'bhattarak', label: 'Bhattarak', sects: ['digambar'] },
+  { value: 'panyas', label: 'Panyas', sects: ['shwetambar'] },
+  { value: 'gani', label: 'Gani', sects: ['shwetambar'] },
+  { value: 'pravartak', label: 'Pravartak', sects: ['shwetambar'] },
+  { value: 'pravartini', label: 'Pravartini', sects: ['shwetambar'] },
+  { value: 'mahattara', label: 'Mahattara', sects: ['shwetambar'] },
+  { value: 'sadhvi_pramukha', label: 'Sadhvi Pramukha', sects: ['shwetambar'] },
+];
+
+const FEMALE_PADS = ['ganini', 'pravartini', 'mahattara', 'sadhvi_pramukha'];
+const FEMALE_TYPES = ['aryika', 'sadhvi'];
+const DIGAMBAR_TYPES = ['muni', 'aryika', 'kshullak', 'kshullika', 'ailak'];
+
+/** Only this tradition's ranks — a flat list is how a Sadhvi got filed as a Muni. */
+function typesForSect(sect: string) {
+  if (!sect) return TYPES;
+  return TYPES.filter((t) =>
+    sect === 'digambar' ? DIGAMBAR_TYPES.includes(t.value) : !DIGAMBAR_TYPES.includes(t.value));
+}
+
+/** Only the posts this rank, in this tradition, may actually hold. */
+function padsFor(type: string, sect: string) {
+  const inTradition = sect ? PADS.filter((p) => p.sects.includes(sect)) : PADS;
+  if (FEMALE_TYPES.includes(type)) {
+    return inTradition.filter((p) => p.value === 'none' || FEMALE_PADS.includes(p.value));
+  }
+  if (['muni', 'ailak', 'sadhu'].includes(type)) {
+    return inTradition.filter((p) => !FEMALE_PADS.includes(p.value));
+  }
+  // Kshullak and Kshullika are junior ranks and hold no sangh office.
+  return PADS.filter((p) => p.value === 'none');
+}
+
 function MaharajCreateForm({ onDone }: { onDone: () => void }) {
   const [form, setForm] = useState({
-    name: '', type: 'muni', samuday: '', sect: '', sub_sect: '', state: '', city: '',
-    diksha_year: '', guru_name: '', bio: '', rep_mobile: '', photo_base64: '', verified: false,
+    name_en: '', name_hi: '', type: 'muni', pad: 'none', samuday: '', sect: '', sub_sect: '',
+    state: '', city: '',
+    diksha_year: '', guru_name: '', bio: '', rep_mobile: '', rep_name: '',
+    photo_base64: '', verified: false,
   });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
@@ -142,7 +343,14 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
         await api('/admin/maharaj', {
           method: 'POST',
           body: {
-            name: form.name, type: form.type, samuday: form.samuday || undefined,
+            // `name` is the canonical display value every reader falls back to.
+            // Whichever script the curator filled in becomes it; the API works
+            // the pair out from there and never transliterates.
+            name: form.name_en || form.name_hi,
+            name_en: form.name_en || undefined,
+            name_hi: form.name_hi || undefined,
+            type: form.type, pad: form.pad || undefined,
+            samuday: form.samuday || undefined,
             // Sampradaya is a separate field from samuday (migration 024) and
             // this form never sent it, so every sant added from the console
             // arrived sect NULL. `|| undefined` because the DTO validates
@@ -158,19 +366,46 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
           },
         });
       }}>
-      <label className="field"><span>Name *</span><input value={form.name} onChange={set('name')} required /></label>
-      <label className="field"><span>Type</span>
-        <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
+      {/* Both scripts. At least one is required — the API refuses a nameless
+          profile — and whichever is left blank falls back on read, so a curator
+          working from a single-script list is never forced to invent the other. */}
+      <label className="field"><span>Name (English)</span>
+        <input value={form.name_en} onChange={set('name_en')} placeholder="Muni Kshamasagar Ji" />
+      </label>
+      <label className="field"><span>Name (Hindi / Devanagari)</span>
+        <input value={form.name_hi} onChange={set('name_hi')} placeholder="मुनि क्षमासागर जी" lang="hi" />
+      </label>
+      {!form.name_en && !form.name_hi && (
+        <p className="muted" style={{ fontSize: 12, marginTop: -8 }}>Enter the name in at least one script.</p>
+      )}
+      <label className="field"><span>Sampradaya</span>
+        <select value={form.sect} onChange={(e) => setForm({
+          ...form, sect: e.target.value, sub_sect: '',
+          // Changing tradition can strand a rank and a post that belong to the
+          // other one; clear rather than submit a pair the API will reject.
+          type: typesForSect(e.target.value)[0]?.value ?? form.type,
+          pad: 'none',
+        })}>
+          {SECTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+      </label>
+      <label className="field"><span>Type (rank)</span>
+        <select value={form.type} onChange={(e) => setForm({
+          ...form, type: e.target.value,
+          pad: padsFor(e.target.value, form.sect).some((p) => p.value === form.pad) ? form.pad : 'none',
+        })}>
+          {typesForSect(form.sect).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+      </label>
+      <label className="field"><span>Pad (post held)</span>
+        <select value={form.pad} onChange={set('pad')}>
+          {padsFor(form.type, form.sect).map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
       </label>
       {/* samuday, sect and sub_sect are three different things (migration 024).
           This field was labelled "Samuday / Sect" and suggested "Tapagachha" —
           a gaccha, i.e. a sub_sect — which conflated all three at once. */}
       <label className="field"><span>Samuday (community)</span><input value={form.samuday} onChange={set('samuday')} placeholder="e.g. Oswal, Porwal, Agarwal" /></label>
-      <label className="field"><span>Sampradaya</span>
-        <select value={form.sect} onChange={(e) => setForm({ ...form, sect: e.target.value, sub_sect: '' })}>
-          {SECTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-      </label>
       {form.sect && (
         <label className="field"><span>Panth / Gaccha</span>
           <input value={form.sub_sect} onChange={set('sub_sect')}
@@ -187,9 +422,17 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
       <label className="field"><span>Guru name</span><input value={form.guru_name} onChange={set('guru_name')} /></label>
       <label className="field"><span>Bio</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
       <PhotoPicker value={form.photo_base64} onChange={(v) => setForm({ ...form, photo_base64: v })} />
-      <label className="field"><span>Rep mobile (their login, optional)</span>
+      {/* THE HANDOVER. Whoever is named here becomes the profile's sant admin:
+          they can then add and remove the other representatives themselves,
+          without coming back to us. Leaving it blank creates a profile nobody
+          can manage until somebody is added from the Representatives tab. */}
+      <label className="field"><span>Sant admin mobile (their login)</span>
         <input value={form.rep_mobile} onChange={set('rep_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" />
       </label>
+      <p className="muted" style={{ fontSize: 12, marginTop: -8 }}>
+        They are invited by WhatsApp or SMS and become the sant admin, who manages the other
+        representatives. Leave blank for a historical record with no representative.
+      </p>
       <label className="field-check">
         <input type="checkbox" checked={form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
         <span>Mark verified (visible to devotees immediately)</span>
@@ -200,12 +443,24 @@ function MaharajCreateForm({ onDone }: { onDone: () => void }) {
 
 interface Rep {
   id: string; mobile: string; name: string | null; user_id: string | null;
+  /** admin = the sant admin, who manages the rest themselves (migration 044). */
+  role: 'admin' | 'rep';
   /** Null until an invite message actually left the building — see migration 043. */
   invite_sent_at: string | null; invite_channel: string | null; invite_error: string | null;
+}
+
+interface RepRequest {
+  id: string; mobile: string; name: string | null; reason: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  requested_by_name: string | null; requested_at: string; review_note: string | null;
 }
 interface FullProfile extends MaharajProfile {
   bio: string | null; languages: string[]; photo_url: string | null; photo_base64: string | null;
   rep_mobile: string | null; rep_name: string | null;
+  name_en: string | null; name_hi: string | null;
+  samadhi_date: string | null; tithi_note: string | null;
+  is_samadhistha: boolean;
+  rep_requests: RepRequest[];
   current_location: { place: string; city: string | null; state: string | null; lat: number | null; lng: number | null; from_date: string | null; to_date: string | null; chaturmas: boolean; notes: string | null } | null;
   reps: Rep[];
 }
@@ -216,7 +471,7 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
 }) {
   const [p, setP] = useState<FullProfile | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [tab, setTab] = useState<'details' | 'location' | 'reps'>('details');
+  const [tab, setTab] = useState<'details' | 'location' | 'reps' | 'samadhi'>('details');
 
   const load = useCallback(() => {
     api<FullProfile>(`/admin/maharaj/${id}`).then((r) => setP(r.data)).catch(setError);
@@ -228,10 +483,29 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
 
   return (
     <div>
+      {/* A memorial is deliberately still here and still visible to devotees.
+          Saying so is what stops a curator reading the missing actions as a
+          fault and re-adding a representative to "fix" it. */}
+      {p.is_samadhistha && (
+        <div style={{
+          marginBottom: 16, padding: 12, borderRadius: 8,
+          background: '#f8fafc', border: '1px solid #e2e8f0',
+        }}>
+          <strong style={{ fontSize: 13 }}>Samadhistha — {p.samadhi_date?.slice(0, 10)}</strong>
+          <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
+            This profile is a record. It has no representatives and no current location, and stays
+            fully visible to devotees. Clear the date on the Samadhi tab if it was entered by mistake.
+          </p>
+        </div>
+      )}
+
       <div className="tabs" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {(['details', 'location', 'reps'] as const).map((t) => (
+        {(['details', 'location', 'reps', 'samadhi'] as const).map((t) => (
           <button key={t} className={`btn sm ${tab === t ? 'primary' : ''}`} onClick={() => setTab(t)}>
-            {t === 'details' ? 'Details' : t === 'location' ? 'Location' : 'Representatives'}
+            {t === 'details' ? 'Details'
+              : t === 'location' ? 'Location'
+              : t === 'reps' ? `Representatives${p.rep_requests?.some((r) => r.status === 'pending') ? ' •' : ''}`
+              : 'Samadhi'}
           </button>
         ))}
       </div>
@@ -244,13 +518,20 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
         <LocationTab p={p} onDone={() => { load(); onChanged(); onToast('Current location saved.'); }} />
       )}
       {tab === 'reps' && <RepsTab p={p} onChanged={load} onToast={onToast} />}
+      {tab === 'samadhi' && (
+        <SamadhiTab p={p} onDone={() => { load(); onChanged(); }} onToast={onToast} />
+      )}
     </div>
   );
 }
 
 function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => void; onDeleted: () => void }) {
   const [form, setForm] = useState({
-    name: p.name, type: p.type, samuday: p.samuday ?? '',
+    name_en: p.name_en ?? '', name_hi: p.name_hi ?? '',
+    // `as string`: the pickers below narrow by tradition and hand back whatever
+    // the select holds, so the form state is the wider type and the API — which
+    // validates against the same list — is the thing that enforces it.
+    type: p.type as string, pad: p.pad ?? 'none', samuday: p.samuday ?? '',
     sect: p.sect ?? '', sub_sect: p.sub_sect ?? '', state: p.state ?? '', city: p.city ?? '',
     diksha_year: p.diksha_year != null ? String(p.diksha_year) : '', guru_name: p.guru_name ?? '',
     bio: p.bio ?? '', languages: (p.languages ?? []).join(', '), verified: p.verified,
@@ -271,7 +552,16 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
           await api(`/admin/maharaj/${p.id}`, {
             method: 'PATCH',
             body: {
-              name: form.name, type: form.type, samuday: form.samuday || null,
+              // The only place in the estate that writes these. A rep raises a
+              // change request; nothing else touches them.
+              name_en: form.name_en || null,
+              name_hi: form.name_hi || null,
+              // `name` is kept in step with whichever script is filled in, so
+              // the fallback every other reader uses never points at a stale
+              // spelling after a correction is applied here.
+              name: form.name_en || form.name_hi || p.name,
+              type: form.type, pad: form.pad || undefined,
+              samuday: form.samuday || null,
               // Editable so the readiness report's outstanding sants can be
               // fixed here. `undefined` (omit) rather than null when unset:
               // the DTO validates against the two sects, so '' or null would
@@ -293,13 +583,34 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
             await api(`/admin/maharaj/${p.id}/verify`, { method: 'PATCH', body: { verified: form.verified } });
           }
         }}>
-        <label className="field"><span>Name *</span><input value={form.name} onChange={set('name')} required /></label>
-        <label className="field"><span>Type</span>
-          <select value={form.type} onChange={set('type')}>{TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
+        <label className="field"><span>Name (English)</span>
+          <input value={form.name_en} onChange={set('name_en')} />
+        </label>
+        <label className="field"><span>Name (Hindi / Devanagari)</span>
+          <input value={form.name_hi} onChange={set('name_hi')} lang="hi" />
+        </label>
+        <label className="field"><span>Type (rank)</span>
+          <select value={form.type} onChange={(e) => setForm({
+            ...form, type: e.target.value,
+            pad: padsFor(e.target.value, form.sect).some((x) => x.value === form.pad) ? form.pad : 'none',
+          })}>
+            {typesForSect(form.sect).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Pad (post held)</span>
+          <select value={form.pad} onChange={set('pad')}>
+            {padsFor(form.type, form.sect).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+          </select>
         </label>
         <label className="field"><span>Samuday (community)</span><input value={form.samuday} onChange={set('samuday')} placeholder="e.g. Oswal, Porwal, Agarwal" /></label>
         <label className="field"><span>Sampradaya</span>
-          <select value={form.sect} onChange={(e) => setForm({ ...form, sect: e.target.value, sub_sect: '' })}>
+          <select value={form.sect} onChange={(e) => setForm({
+            ...form, sect: e.target.value, sub_sect: '',
+            type: typesForSect(e.target.value).some((t) => t.value === form.type)
+              ? form.type
+              : (typesForSect(e.target.value)[0]?.value ?? form.type),
+            pad: 'none',
+          })}>
             {SECTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </label>
@@ -387,8 +698,12 @@ function RepsTab({ p, onChanged, onToast }: {
 }) {
   const [mobile, setMobile] = useState('');
   const [name, setName] = useState('');
+  const [asAdmin, setAsAdmin] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+
+  const hasAdmin = p.reps.some((r) => r.role === 'admin');
+  const pendingRequests = (p.rep_requests ?? []).filter((r) => r.status === 'pending');
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -397,9 +712,10 @@ function RepsTab({ p, onChanged, onToast }: {
       // The response now says whether the invite reached them, so the console
       // can stop claiming "Invited" for a message that was never sent.
       const { data } = await api<{ invite_sent?: boolean; invite_channel?: string | null; invite_error?: string | null }>(
-        `/admin/maharaj/${p.id}/reps`, { method: 'POST', body: { mobile, name: name || undefined } },
+        `/admin/maharaj/${p.id}/reps`,
+        { method: 'POST', body: { mobile, name: name || undefined, role: asAdmin || !hasAdmin ? 'admin' : 'rep' } },
       );
-      setMobile(''); setName(''); onChanged();
+      setMobile(''); setName(''); setAsAdmin(false); onChanged();
       if (data?.invite_sent) onToast(`Representative added — invite sent by ${data.invite_channel ?? 'message'}.`);
       else onToast(`Representative added, but the invite could not be sent (${data?.invite_error ?? 'unknown reason'}). They can still sign in with this number.`, 'bad');
     } catch (err) { setError(err); } finally { setBusy(false); }
@@ -413,6 +729,35 @@ function RepsTab({ p, onChanged, onToast }: {
       onChanged();
       if (data?.invite_sent) onToast(`Invite re-sent to ${rep.mobile} by ${data.invite_channel ?? 'message'}.`);
       else onToast(`Could not send the invite: ${data?.invite_error ?? 'unknown reason'}`, 'bad');
+    } catch (err) { setError(err); }
+  }
+
+  /**
+   * Make somebody the sant admin — the Super Admin's override of a handover the
+   * sant admin can normally do themselves.
+   *
+   * Needed precisely because the ordinary path requires the CURRENT admin to
+   * act, and the cases that reach us are the ones where they cannot: a phone
+   * lost, a person no longer with the sangh, an admin who has stopped
+   * answering. Promoting demotes the incumbent in the same transaction.
+   */
+  async function setRole(rep: Rep, role: 'admin' | 'rep') {
+    const verb = role === 'admin' ? 'make the sant admin' : 'demote to a plain representative';
+    if (!confirm(`${rep.name || rep.mobile} — ${verb}?${
+      role === 'admin' && hasAdmin ? '\n\nThe current sant admin becomes a plain representative.' : ''
+    }`)) return;
+    try {
+      await api(`/admin/maharaj/${p.id}/reps/${rep.id}/role`, { method: 'PATCH', body: { role } });
+      onChanged();
+      onToast(role === 'admin' ? `${rep.name || rep.mobile} is now the sant admin.` : 'Role updated.');
+    } catch (err) { setError(err); }
+  }
+
+  async function decide(req: RepRequest, decision: 'approve' | 'reject') {
+    try {
+      await api(`/admin/maharaj/rep-requests/${req.id}/${decision}`, { method: 'POST' });
+      onChanged();
+      onToast(decision === 'approve' ? 'Approved — the representative has been invited.' : 'Request rejected.');
     } catch (err) { setError(err); }
   }
 
@@ -441,20 +786,75 @@ function RepsTab({ p, onChanged, onToast }: {
     );
   }
 
+  if (p.is_samadhistha) {
+    return (
+      <p className="muted">
+        This ascetic has attained samadhi, so the profile is a record and has no representatives.
+        Clear the samadhi date on the Samadhi tab if it was entered by mistake — the previous
+        representatives are not restored automatically and would need re-inviting.
+      </p>
+    );
+  }
+
   return (
     <div>
       <p className="muted" style={{ marginBottom: 12 }}>
-        Logins that can manage this profile. The primary rep is
-        {p.rep_mobile ? <> <strong>{p.rep_name || 'linked'} ({p.rep_mobile})</strong></> : <> not set</>}.
+        Logins that can manage this profile. The <strong>sant admin</strong> adds and removes the
+        others themselves, without coming back here.
       </p>
       <ErrorBox error={error} />
+
+      {!hasAdmin && (
+        <p style={{ color: '#b45309', fontSize: 13, marginBottom: 12 }}>
+          No sant admin. Nobody can add representatives to this profile from the sant portal until
+          one is named — the first person added below becomes the sant admin.
+        </p>
+      )}
+
+      {/* Requests a sant admin has not acted on. Shown here because we are the
+          escalation path: an admin who has gone quiet leaves these with nobody
+          able to decide them. */}
+      {pendingRequests.length > 0 && (
+        <div style={{
+          marginBottom: 16, padding: 12, borderRadius: 8,
+          background: '#fffbeb', border: '1px solid #fde68a',
+        }}>
+          <strong style={{ fontSize: 13 }}>
+            {pendingRequests.length} request(s) waiting for the sant admin
+          </strong>
+          <table className="data" style={{ marginTop: 8 }}>
+            <tbody>
+              {pendingRequests.map((r) => (
+                <tr key={r.id}>
+                  <td className="mono">{r.mobile}</td>
+                  <td>{r.name ?? <span className="muted">—</span>}</td>
+                  <td className="muted">
+                    {r.requested_by_name ? `asked by ${r.requested_by_name}` : ''}
+                    {r.reason ? ` · ${r.reason}` : ''}
+                  </td>
+                  <td>
+                    <button className="btn sm primary" onClick={() => decide(r, 'approve')}>Approve</button>{' '}
+                    <button className="btn sm" onClick={() => decide(r, 'reject')}>Reject</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <table className="data">
-        <thead><tr><th>Mobile</th><th>Name</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Mobile</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
         <tbody>
           {p.reps.map((r) => (
             <tr key={r.id}>
               <td className="mono">{r.mobile}</td>
               <td>{r.name ?? <span className="muted">—</span>}</td>
+              <td>
+                {r.role === 'admin'
+                  ? <strong>Sant admin</strong>
+                  : <span className="muted">Representative</span>}
+              </td>
               <td>{status(r)}</td>
               <td>
                 {!r.user_id && (
@@ -464,26 +864,353 @@ function RepsTab({ p, onChanged, onToast }: {
                     </button>{' '}
                   </>
                 )}
-                <button className="btn sm danger" onClick={async () => {
-                  if (confirm('Remove this representative?')) {
-                    await api(`/admin/maharaj/${p.id}/reps/${r.id}`, { method: 'DELETE' });
-                    onChanged();
-                    onToast('Representative removed.');
-                  }
-                }}>Remove</button>
+                {r.role !== 'admin' && (
+                  <>
+                    <button className="btn sm" onClick={() => setRole(r, 'admin')}>Make sant admin</button>{' '}
+                  </>
+                )}
+                {/* No Remove on the sant admin: the API refuses it (409
+                    LAST_ADMIN) because a profile with no admin is one nobody
+                    can add anybody to. Hand the role over first. */}
+                {r.role !== 'admin' && (
+                  <button className="btn sm danger" onClick={async () => {
+                    if (confirm('Remove this representative?')) {
+                      await api(`/admin/maharaj/${p.id}/reps/${r.id}`, { method: 'DELETE' });
+                      onChanged();
+                      onToast('Representative removed.');
+                    }
+                  }}>Remove</button>
+                )}
               </td>
             </tr>
           ))}
-          {p.reps.length === 0 && <tr><td colSpan={4} className="muted">No co-representatives yet.</td></tr>}
+          {p.reps.length === 0 && <tr><td colSpan={5} className="muted">No representatives yet.</td></tr>}
         </tbody>
       </table>
+
       <form onSubmit={add} style={{ marginTop: 16 }}>
         <label className="field"><span>Name (optional)</span><input value={name} onChange={(e) => setName(e.target.value)} /></label>
         <label className="field"><span>Mobile number</span>
           <input value={mobile} onChange={(e) => setMobile(e.target.value.replace(/\D/g, ''))} inputMode="numeric" maxLength={10} placeholder="9876543210" />
         </label>
+        <label className="field-check">
+          <input type="checkbox" checked={asAdmin || !hasAdmin} disabled={!hasAdmin}
+            onChange={(e) => setAsAdmin(e.target.checked)} />
+          <span>
+            {hasAdmin
+              ? 'Make them the sant admin (the current one becomes a plain representative)'
+              : 'They become the sant admin — this profile has none'}
+          </span>
+        </label>
         <div className="actions"><button className="btn primary" type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add representative'}</button></div>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Record that an ascetic has attained samadhi — or clear a date entered by
+ * mistake.
+ *
+ * ITS OWN TAB, not a field on the details form, because it is not a field
+ * edit: applying it detaches every representative, retires the current
+ * location and closes any open request. That must never happen as a side
+ * effect of somebody fixing a typo in a bio, and the person doing it needs to
+ * have read what it will do.
+ */
+function SamadhiTab({ p, onDone, onToast }: {
+  p: FullProfile; onDone: () => void; onToast: (text: string, tone?: 'ok' | 'bad') => void;
+}) {
+  const [date, setDate] = useState(p.samadhi_date?.slice(0, 10) ?? '');
+  const [tithi, setTithi] = useState(p.tithi_note ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function save(clear: boolean) {
+    const repCount = p.reps?.length ?? 0;
+    if (!clear && !confirm(
+      `Record samadhi for ${p.name_en || p.name} on ${date}?\n\n` +
+      `This detaches ${repCount} representative(s), retires the current location and closes any ` +
+      `pending request. The profile stays visible to devotees.`,
+    )) return;
+    setBusy(true); setError(null);
+    try {
+      await api(`/admin/maharaj/${p.id}/samadhi`, {
+        method: 'PATCH',
+        body: { samadhi_date: clear ? null : date, tithi_note: tithi || undefined },
+      });
+      onDone();
+      onToast(clear ? 'Samadhi date cleared.' : 'Recorded.');
+    } catch (err) { setError(err); } finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      <ErrorBox error={error} />
+      <p className="muted" style={{ marginBottom: 12 }}>
+        Recording samadhi turns this profile into a record: it keeps its history, its chaturmas
+        entries and its anniversary dates, and stays fully visible in the devotee directory — but
+        it has no representatives and no current whereabouts. The devotee app can filter on it.
+      </p>
+      <label className="field"><span>Samadhi date</span>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      </label>
+      <label className="field"><span>Tithi (as observed)</span>
+        <input value={tithi} onChange={(e) => setTithi(e.target.value)} placeholder="e.g. Kartik Krishna 14" />
+      </label>
+      <p className="muted" style={{ fontSize: 12 }}>
+        Free text on purpose: the community observes the tithi, not the Gregorian anniversary, and
+        tithi-to-date varies by panchang and region.
+      </p>
+      <div className="actions" style={{ marginTop: 12 }}>
+        <button className="btn primary" disabled={busy || !date} onClick={() => save(false)}>
+          {busy ? 'Saving…' : 'Record samadhi'}
+        </button>{' '}
+        {p.is_samadhistha && (
+          <button className="btn" disabled={busy} onClick={() => save(true)}>
+            Clear — entered by mistake
+          </button>
+        )}
+      </div>
+      {p.is_samadhistha && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          Clearing the date restores the profile to a living one, but does <strong>not</strong> bring
+          the representatives back — their access was removed and re-inviting them is a deliberate act.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Set one location for several ascetics — a sangh travelling together.
+ *
+ * The console's counterpart to the sant portal's bulk update, and here for the
+ * same reason: a group arrives in one town on one day, and retyping the place
+ * and pin for each member is how one of them ends up in the wrong district.
+ */
+function BulkLocationForm({ santIds, onDone }: { santIds: string[]; onDone: (msg: string) => void }) {
+  const [form, setForm] = useState({
+    place: '', state: '', city: '', from_date: '', to_date: '', chaturmas: false, notes: '',
+    lat: null as number | null, lng: null as number | null,
+  });
+  const [errors, setErrors] = useState<Array<{ sant_id: string; message: string }>>([]);
+
+  return (
+    <ActionForm submitLabel={`Set location for ${santIds.length}`} onDone={() => { /* handled below */ }}
+      successMessage={null}
+      onSubmit={async () => {
+        const { data } = await api<{ updated: number; skipped: number; errors: Array<{ sant_id: string; message: string }> }>(
+          '/admin/maharaj/locations/bulk',
+          {
+            method: 'POST',
+            body: {
+              sant_ids: santIds,
+              place: form.place, state: form.state || null, city: form.city || null,
+              from_date: form.from_date || null, to_date: form.to_date || null,
+              chaturmas: form.chaturmas, notes: form.notes || null,
+              lat: form.lat, lng: form.lng,
+            },
+          },
+        );
+        // Partial success is the contract, so it is reported rather than
+        // swallowed: "5 of 7 updated" with no indication of which two is worse
+        // than an outright failure.
+        if (data.skipped > 0) {
+          setErrors(data.errors ?? []);
+          return;
+        }
+        onDone(`Location set for ${data.updated} Sadhu-Sadhvi.`);
+      }}>
+      <label className="field"><span>Place / Venue *</span>
+        <input value={form.place} onChange={(e) => setForm({ ...form, place: e.target.value })} required
+          placeholder="e.g. Shree Jain Derasar" />
+      </label>
+      <label className="field"><span>State</span>
+        <StateSelect value={form.state} onChange={(st) => setForm({ ...form, state: st, city: '' })} />
+      </label>
+      <label className="field"><span>City</span>
+        <CitySelect state={form.state} value={form.city} onChange={(c) => setForm({ ...form, city: c })} />
+      </label>
+      <label className="field"><span>From</span>
+        <input type="date" value={form.from_date} onChange={(e) => setForm({ ...form, from_date: e.target.value })} />
+      </label>
+      <label className="field"><span>To</span>
+        <input type="date" value={form.to_date} onChange={(e) => setForm({ ...form, to_date: e.target.value })} />
+      </label>
+      <label className="field-check">
+        <input type="checkbox" checked={form.chaturmas} onChange={(e) => setForm({ ...form, chaturmas: e.target.checked })} />
+        <span>Chaturmas stay</span>
+      </label>
+      <label className="field"><span>Notes</span>
+        <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
+      </label>
+      <div style={{ margin: '8px 0 16px' }}>
+        <LocationPicker lat={form.lat} lng={form.lng} onChange={(lat, lng) => setForm({ ...form, lat, lng })} />
+      </div>
+      {errors.length > 0 && (
+        <div style={{ padding: 10, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
+          <strong style={{ fontSize: 13 }}>{errors.length} could not be updated</strong>
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12 }}>
+            {errors.map((e) => <li key={e.sant_id}>{e.message}</li>)}
+          </ul>
+        </div>
+      )}
+    </ActionForm>
+  );
+}
+
+/**
+ * Load a sant list.
+ *
+ * A real directory arrives as a spreadsheet of a few hundred ascetics, most of
+ * them historical, in one script. Typing those in one form at a time is not a
+ * plan, and neither is a one-off script nobody can re-run: the list gets
+ * corrected and re-sent.
+ *
+ * DRY RUN FIRST, ALWAYS. The preview is what a real run would do, row by row,
+ * so a bad column mapping is discovered before it becomes three hundred public
+ * profiles of named people. Only after reading it can the curator commit.
+ */
+function ImportForm({ onDone }: { onDone: () => void }) {
+  const [text, setText] = useState('');
+  const [verified, setVerified] = useState(false);
+  const [onDuplicate, setOnDuplicate] = useState('skip');
+  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  interface ImportResult {
+    dry_run: boolean; total: number; created: number; updated: number; skipped: number; failed: number;
+    results: Array<{ row: number; action: string; name: string; message?: string }>;
+  }
+
+  /**
+   * CSV or JSON, because a curator has whichever the list arrived as.
+   *
+   * The CSV branch is deliberately simple — split on commas, first row is the
+   * header — and says so: a name containing a comma has to be quoted, and the
+   * dry-run preview is where that shows up as a wrong-looking name rather than
+   * as a corrupted profile.
+   */
+  function parse(raw: string): Record<string, unknown>[] {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }
+    const lines = trimmed.split(/\r?\n/).filter((l) => l.trim());
+    const header = splitCsv(lines[0]).map((h) => h.trim());
+    return lines.slice(1).map((line) => {
+      const cells = splitCsv(line);
+      const row: Record<string, unknown> = {};
+      header.forEach((h, i) => {
+        const v = (cells[i] ?? '').trim();
+        if (!v) return;
+        row[h] = h === 'diksha_year' ? Number(v) : v;
+      });
+      return row;
+    });
+  }
+
+  /** Splits one CSV line, honouring "quoted, fields". */
+  function splitCsv(line: string): string[] {
+    const out: string[] = [];
+    let cur = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') {
+        if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (c === ',' && !inQuotes) { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  async function run(dryRun: boolean) {
+    setBusy(true); setError(null);
+    try {
+      const rows = parse(text);
+      if (!rows.length) throw new Error('Nothing to import — paste the list above.');
+      const { data } = await api<ImportResult>('/admin/maharaj/import', {
+        method: 'POST',
+        body: { rows, dry_run: dryRun, verified, on_duplicate: onDuplicate },
+      });
+      setPreview(data);
+      if (!dryRun) onDone();
+    } catch (err) { setError(err); } finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      <ErrorBox error={error} />
+      <p className="muted" style={{ marginBottom: 8 }}>
+        Paste CSV (first row = column names) or a JSON array. Columns:{' '}
+        <code>name_en, name_hi, type, pad, sect, sub_sect, samuday, city, state, diksha_year,
+        guru_name, bio, samadhi_date, tithi_note, rep_mobile, rep_name</code>. At least one of
+        name_en / name_hi is required per row.
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => { setText(e.target.value); setPreview(null); }}
+        rows={10}
+        style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
+        placeholder={'name_en,name_hi,type,sect,samadhi_date\nAcharya Vidyasagar Ji,आचार्य विद्यासागर जी,muni,digambar,2024-02-17'}
+      />
+      <label className="field-check">
+        <input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} />
+        <span>Publish immediately (otherwise they land in the verification queue)</span>
+      </label>
+      <label className="field"><span>If a name already exists</span>
+        <select value={onDuplicate} onChange={(e) => setOnDuplicate(e.target.value)}>
+          <option value="skip">Skip it — leave the existing profile alone</option>
+          <option value="update">Fill in the fields this list carries</option>
+        </select>
+      </label>
+      <p className="muted" style={{ fontSize: 12 }}>
+        Updating never blanks a field a curator filled in by hand — only empty ones are filled.
+      </p>
+
+      {preview && (
+        <div style={{
+          margin: '12px 0', padding: 10, borderRadius: 8,
+          background: preview.failed ? '#fffbeb' : '#f0fdf4',
+          border: `1px solid ${preview.failed ? '#fde68a' : '#bbf7d0'}`,
+        }}>
+          <strong style={{ fontSize: 13 }}>
+            {preview.dry_run ? 'Preview — nothing has been written' : 'Imported'}: {preview.created} new,
+            {' '}{preview.updated} updated, {preview.skipped} skipped, {preview.failed} failed
+          </strong>
+          <div style={{ maxHeight: 180, overflowY: 'auto', marginTop: 6 }}>
+            <table className="data">
+              <tbody>
+                {preview.results.map((r) => (
+                  <tr key={r.row}>
+                    <td className="muted" style={{ width: 32 }}>{r.row}</td>
+                    <td>{r.name || <span className="muted">(no name)</span>}</td>
+                    <td className={r.action === 'error' ? 'danger' : 'muted'}>{r.action}</td>
+                    <td className="muted">{r.message ?? ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="actions">
+        <button className="btn" disabled={busy || !text.trim()} onClick={() => run(true)}>
+          {busy ? 'Checking…' : 'Preview'}
+        </button>{' '}
+        {/* Commit is unavailable until a preview has been read. The whole point
+            of the dry run is that somebody looked at it. */}
+        <button className="btn primary" disabled={busy || !preview?.dry_run} onClick={() => run(false)}>
+          Import for real
+        </button>
+      </div>
     </div>
   );
 }
