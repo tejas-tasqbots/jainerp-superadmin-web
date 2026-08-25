@@ -89,6 +89,20 @@ export function SanghsPage() {
               <td>
                 {sg.name_en}
                 {sg.sect && <div className="muted" style={{ fontSize: 11 }}>{sg.sect}</div>}
+                {/* The import split several sanghs across two spellings —
+                    "Aarjav Sagar Ji" and "Aarjav Sagarji", ten members each;
+                    Vardhaman Sagarji's is 88 and 23. A curator scrolling 181
+                    names cannot see that, and the two look like two groups.
+                    Flagged, never merged automatically: one such pair is an
+                    Acharya's sangh beside an ARYIKA of the same name, who is a
+                    different person. Use the Sadhu-Sadhvi list's "Set sangh"
+                    once you have decided they are one. */}
+                {!!sg.duplicate_of?.length && (
+                  <div style={{ fontSize: 11, color: '#b45309' }}>
+                    possible duplicate of {sg.duplicate_of.length} other
+                    {sg.duplicate_of.length > 1 ? ' sanghs' : ' sangh'} with this name
+                  </div>
+                )}
               </td>
               <td>{sg.name_hi || <span className="muted">— not set</span>}</td>
               <td>{sg.parampara || <span className="muted">—</span>}</td>

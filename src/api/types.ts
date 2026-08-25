@@ -322,6 +322,13 @@ export interface Sangh {
   members_count: number;
   heads_count: number;
   heads: SanghHead[];
+  /**
+   * Ids of other sanghs whose name keys the same — the import split
+   * several across two spellings. A FLAG for a curator, never a merge:
+   * one such pair is an Acharya's sangh beside an Aryika of the same
+   * name, who is a different person.
+   */
+  duplicate_of?: string[];
 }
 
 export interface AdminUser {
