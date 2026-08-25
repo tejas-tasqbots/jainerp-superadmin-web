@@ -277,7 +277,10 @@ export function MaharajPage() {
                   </>
                 );
               })()}</td>
-              <td>{m.followers_count}</td>
+              {/* A samadhistha ascetic cannot be followed — the endpoint
+                  refuses it — so a hard 0 in this column reads as a
+                  profile nobody cares about rather than as the rule. */}
+              <td>{m.is_samadhistha ? <span className="muted">—</span> : m.followers_count}</td>
               <td>
                 {m.is_samadhistha
                   ? <span className="muted">Samadhistha</span>
@@ -334,8 +337,8 @@ export function MaharajPage() {
       )}
       {manageId && (
         <Modal title="Manage profile" onClose={() => setManageId(null)}>
-          <MaharajManage id={manageId} onClose={() => setManageId(null)} onChanged={load}
-            onToast={toast.show} />
+          <MaharajManage id={manageId} sanghs={sanghs} onClose={() => setManageId(null)}
+            onChanged={load} onToast={toast.show} />
         </Modal>
       )}
     </div>
@@ -550,13 +553,26 @@ interface FullProfile extends MaharajProfile {
   name_en: string | null; name_hi: string | null;
   samadhi_date: string | null; tithi_note: string | null;
   is_samadhistha: boolean;
+  sangh_id: string | null; is_sangh_head: boolean;
+  birth_date: string | null; diksha_date: string | null;
+  // Migration 048 — seeded by the scrape, shown to every devotee, and until
+  // now editable nowhere.
+  bio_hi: string | null; about: string | null;
+  name_before_diksha: string | null;
+  fathers_name: string | null; mothers_name: string | null;
+  diksha_place: string | null;
+  brahmacharya_year: number | null; brahmacharya_place: string | null;
+  brahmacharya_guru: string | null;
+  education: string | null; honours: string | null;
+  sallekhana_place: string | null; family_initiated: string | null;
+  source_url: string | null; source_credit: string | null;
   rep_requests: RepRequest[];
   current_location: { place: string; city: string | null; state: string | null; lat: number | null; lng: number | null; from_date: string | null; to_date: string | null; chaturmas: boolean; notes: string | null } | null;
   reps: Rep[];
 }
 
-function MaharajManage({ id, onClose, onChanged, onToast }: {
-  id: string; onClose: () => void; onChanged: () => void;
+function MaharajManage({ id, sanghs, onClose, onChanged, onToast }: {
+  id: string; sanghs: Sangh[]; onClose: () => void; onChanged: () => void;
   onToast: (text: string, tone?: 'ok' | 'bad') => void;
 }) {
   const [p, setP] = useState<FullProfile | null>(null);
@@ -603,7 +619,7 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
       </div>
 
       {tab === 'details' && (
-        <DetailsTab p={p} onDone={() => { load(); onChanged(); onToast('Profile saved.'); }}
+        <DetailsTab p={p} sanghs={sanghs} onDone={() => { load(); onChanged(); onToast('Profile saved.'); }}
           onDeleted={() => { onChanged(); onClose(); onToast('Profile deleted.'); }} />
       )}
       {tab === 'location' && (
@@ -617,7 +633,9 @@ function MaharajManage({ id, onClose, onChanged, onToast }: {
   );
 }
 
-function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => void; onDeleted: () => void }) {
+function DetailsTab({ p, sanghs, onDone, onDeleted }: {
+  p: FullProfile; sanghs: Sangh[]; onDone: () => void; onDeleted: () => void;
+}) {
   const [form, setForm] = useState({
     name_en: p.name_en ?? '', name_hi: p.name_hi ?? '',
     // `as string`: the pickers below narrow by tradition and hand back whatever
@@ -627,6 +645,22 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
     sect: p.sect ?? '', sub_sect: p.sub_sect ?? '', state: p.state ?? '', city: p.city ?? '',
     diksha_year: p.diksha_year != null ? String(p.diksha_year) : '', guru_name: p.guru_name ?? '',
     bio: p.bio ?? '', languages: (p.languages ?? []).join(', '), verified: p.verified,
+    sangh_id: p.sangh_id ?? '', is_sangh_head: !!p.is_sangh_head,
+    // Dates arrive as full timestamps; <input type="date"> wants YYYY-MM-DD
+    // and silently shows nothing for anything else.
+    birth_date: (p.birth_date ?? '').slice(0, 10),
+    diksha_date: (p.diksha_date ?? '').slice(0, 10),
+    bio_hi: p.bio_hi ?? '', about: p.about ?? '',
+    name_before_diksha: p.name_before_diksha ?? '',
+    fathers_name: p.fathers_name ?? '', mothers_name: p.mothers_name ?? '',
+    diksha_place: p.diksha_place ?? '',
+    brahmacharya_year: p.brahmacharya_year != null ? String(p.brahmacharya_year) : '',
+    brahmacharya_place: p.brahmacharya_place ?? '',
+    brahmacharya_guru: p.brahmacharya_guru ?? '',
+    education: p.education ?? '', honours: p.honours ?? '',
+    sallekhana_place: p.sallekhana_place ?? '',
+    family_initiated: p.family_initiated ?? '',
+    source_url: p.source_url ?? '', source_credit: p.source_credit ?? '',
   });
   // Kept out of `form` because it does not travel with the PATCH: the photo
   // has its own endpoint (as it does in the sant portal), so a 200 KB data URI
@@ -663,6 +697,28 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
               diksha_year: form.diksha_year ? Number(form.diksha_year) : null,
               guru_name: form.guru_name || null, bio: form.bio || null,
               languages: form.languages.split(',').map((l) => l.trim()).filter(Boolean),
+              // Sangh membership. '' means "no sangh" and must travel as
+              // null, not be omitted, or a curator can never detach anyone.
+              // The head flag is cleared with it: the CHECK constraint
+              // forbids a head with no sangh and would 500 on save.
+              sangh_id: form.sangh_id || null,
+              is_sangh_head: form.sangh_id ? form.is_sangh_head : false,
+              birth_date: form.birth_date || null,
+              diksha_date: form.diksha_date || null,
+              bio_hi: form.bio_hi || null, about: form.about || null,
+              name_before_diksha: form.name_before_diksha || null,
+              fathers_name: form.fathers_name || null,
+              mothers_name: form.mothers_name || null,
+              diksha_place: form.diksha_place || null,
+              brahmacharya_year: form.brahmacharya_year
+                ? Number(form.brahmacharya_year) : undefined,
+              brahmacharya_place: form.brahmacharya_place || null,
+              brahmacharya_guru: form.brahmacharya_guru || null,
+              education: form.education || null, honours: form.honours || null,
+              sallekhana_place: form.sallekhana_place || null,
+              family_initiated: form.family_initiated || null,
+              source_url: form.source_url || null,
+              source_credit: form.source_credit || null,
             },
           });
           // Only when it actually changed — re-posting an unchanged photo would
@@ -722,7 +778,71 @@ function DetailsTab({ p, onDone, onDeleted }: { p: FullProfile; onDone: () => vo
         <label className="field"><span>Guru name</span><input value={form.guru_name} onChange={set('guru_name')} /></label>
         <label className="field"><span>Languages (comma-separated)</span><input value={form.languages} onChange={set('languages')} placeholder="gujarati, hindi" /></label>
         <PhotoPicker value={photo} onChange={setPhoto} />
-        <label className="field"><span>Bio</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
+
+        {/* Sangh (migration 047). The API has accepted `sangh_id` since the
+            migration and the console only ever offered it as a BULK action —
+            so correcting one ascetic's sangh meant selecting them in the list
+            and using a dialog built for fifty. */}
+        <label className="field"><span>Sangh</span>
+          <select value={form.sangh_id} onChange={(e) => setForm({
+            ...form, sangh_id: e.target.value,
+            // A head with no sangh violates chk_sant_profiles_head_needs_sangh.
+            is_sangh_head: e.target.value ? form.is_sangh_head : false,
+          })}>
+            <option value="">— no sangh —</option>
+            {sanghs.map((sg) => (
+              <option key={sg.id} value={sg.id}>{sg.name_en ?? sg.name_hi ?? sg.id}</option>
+            ))}
+          </select>
+        </label>
+        {form.sangh_id && (
+          <label className="field-check">
+            <input type="checkbox" checked={form.is_sangh_head}
+              onChange={(e) => setForm({ ...form, is_sangh_head: e.target.checked })} />
+            {/* Several heads per sangh is normal and supported — see
+                SetSanghMembersDto. */}
+            <span>Head of this sangh</span>
+          </label>
+        )}
+
+        <label className="field"><span>Birth date</span>
+          <input type="date" value={form.birth_date} onChange={set('birth_date')} /></label>
+        <label className="field"><span>Diksha date</span>
+          <input type="date" value={form.diksha_date} onChange={set('diksha_date')} /></label>
+        <label className="field"><span>Diksha place</span>
+          <input value={form.diksha_place} onChange={set('diksha_place')} /></label>
+        <label className="field"><span>Name before diksha</span>
+          <input value={form.name_before_diksha} onChange={set('name_before_diksha')} /></label>
+        <label className="field"><span>Father's name</span>
+          <input value={form.fathers_name} onChange={set('fathers_name')} /></label>
+        <label className="field"><span>Mother's name</span>
+          <input value={form.mothers_name} onChange={set('mothers_name')} /></label>
+        <label className="field"><span>Brahmacharya year</span>
+          <input type="number" value={form.brahmacharya_year} onChange={set('brahmacharya_year')} /></label>
+        <label className="field"><span>Brahmacharya place</span>
+          <input value={form.brahmacharya_place} onChange={set('brahmacharya_place')} /></label>
+        <label className="field"><span>Brahmacharya guru</span>
+          <input value={form.brahmacharya_guru} onChange={set('brahmacharya_guru')} /></label>
+        <label className="field"><span>Education</span>
+          <input value={form.education} onChange={set('education')} /></label>
+        <label className="field"><span>Honours</span>
+          <input value={form.honours} onChange={set('honours')} /></label>
+        <label className="field"><span>Sallekhana place</span>
+          <input value={form.sallekhana_place} onChange={set('sallekhana_place')} /></label>
+        <label className="field"><span>Family who took diksha</span>
+          <textarea value={form.family_initiated} onChange={set('family_initiated')} rows={2} /></label>
+
+        <label className="field"><span>Bio (English)</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
+        {/* The Hindi life was editable NOWHERE, and it is the one most devotees
+            read — the profile prefers it for every Indic locale. */}
+        <label className="field"><span>Bio (Hindi / Devanagari)</span>
+          <textarea value={form.bio_hi} onChange={set('bio_hi')} rows={3} lang="hi" /></label>
+        <label className="field"><span>About</span>
+          <textarea value={form.about} onChange={set('about')} rows={2} /></label>
+        <label className="field"><span>Source URL</span>
+          <input value={form.source_url} onChange={set('source_url')} placeholder="https://…" /></label>
+        <label className="field"><span>Source credit</span>
+          <input value={form.source_credit} onChange={set('source_credit')} /></label>
         <label className="field-check">
           <input type="checkbox" checked={form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
           <span>Verified (visible to devotees)</span>
