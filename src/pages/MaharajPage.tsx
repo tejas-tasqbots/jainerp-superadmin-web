@@ -566,7 +566,7 @@ interface FullProfile extends MaharajProfile {
   education: string | null; honours: string | null;
   sallekhana_place: string | null; family_initiated: string | null;
   source_url: string | null; source_credit: string | null;
-  bio_en: string | null;
+  bio_en: string | null; gallery_urls: string[] | null;
   sangh_text: string | null; chaturmas_text: string | null; updates_text: string | null;
   source_references: string | null; birth_date_indian: string | null;
   acharya_pad_date: string | null; acharya_pad_place: string | null;
@@ -679,6 +679,8 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
     acharya_pad_date: (p.acharya_pad_date ?? '').slice(0, 10),
     acharya_pad_place: p.acharya_pad_place ?? '',
     acharya_pad_by: p.acharya_pad_by ?? '',
+    // One URL per line — a text[] a curator can actually edit.
+    gallery_urls: (p.gallery_urls ?? []).join('\n'),
   });
   // Kept out of `form` because it does not travel with the PATCH: the photo
   // has its own endpoint (as it does in the sant portal), so a 200 KB data URI
@@ -746,6 +748,8 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
               acharya_pad_date: form.acharya_pad_date || null,
               acharya_pad_place: form.acharya_pad_place || null,
               acharya_pad_by: form.acharya_pad_by || null,
+              gallery_urls: form.gallery_urls
+                .split('\n').map((u) => u.trim()).filter(Boolean),
             },
           });
           // Only when it actually changed — re-posting an unchanged photo would
@@ -893,6 +897,13 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
         <label className="field"><span>Birth date (Indian calendar)</span>
           <input value={form.birth_date_indian} onChange={set('birth_date_indian')}
             placeholder="e.g. Sharad Purnima, Vikram Samvat 2003" /></label>
+        {/* 1,479 profiles carry a gallery the devotee profile renders, and
+            nothing could correct one — a wrong or dead image sat on the public
+            profile with no way to remove it. One URL per line. The inline
+            photograph above is separate and has its own endpoint. */}
+        <label className="field"><span>Gallery photo URLs (one per line)</span>
+          <textarea value={form.gallery_urls} onChange={set('gallery_urls')} rows={3}
+            placeholder="https://…" /></label>
         <label className="field"><span>Source references</span>
           <textarea value={form.source_references} onChange={set('source_references')} rows={2} /></label>
         <label className="field"><span>About</span>
