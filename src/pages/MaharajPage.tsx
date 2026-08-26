@@ -566,6 +566,11 @@ interface FullProfile extends MaharajProfile {
   education: string | null; honours: string | null;
   sallekhana_place: string | null; family_initiated: string | null;
   source_url: string | null; source_credit: string | null;
+  bio_en: string | null;
+  sangh_text: string | null; chaturmas_text: string | null; updates_text: string | null;
+  source_references: string | null; birth_date_indian: string | null;
+  acharya_pad_date: string | null; acharya_pad_place: string | null;
+  acharya_pad_by: string | null;
   rep_requests: RepRequest[];
   current_location: { place: string; city: string | null; state: string | null; lat: number | null; lng: number | null; from_date: string | null; to_date: string | null; chaturmas: boolean; notes: string | null } | null;
   reps: Rep[];
@@ -661,6 +666,19 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
     sallekhana_place: p.sallekhana_place ?? '',
     family_initiated: p.family_initiated ?? '',
     source_url: p.source_url ?? '', source_credit: p.source_credit ?? '',
+    // `bio_en`, NOT `bio`: the box labelled "Bio (English)" wrote to `bio`,
+    // which zero profiles carry, while all 1,876 lives a devotee can read
+    // are in `bio_en` — so a curator's biography went where the life card
+    // never looks.
+    bio_en: p.bio_en ?? '',
+    sangh_text: p.sangh_text ?? '',
+    chaturmas_text: p.chaturmas_text ?? '',
+    updates_text: p.updates_text ?? '',
+    source_references: p.source_references ?? '',
+    birth_date_indian: p.birth_date_indian ?? '',
+    acharya_pad_date: (p.acharya_pad_date ?? '').slice(0, 10),
+    acharya_pad_place: p.acharya_pad_place ?? '',
+    acharya_pad_by: p.acharya_pad_by ?? '',
   });
   // Kept out of `form` because it does not travel with the PATCH: the photo
   // has its own endpoint (as it does in the sant portal), so a 200 KB data URI
@@ -719,6 +737,15 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
               family_initiated: form.family_initiated || null,
               source_url: form.source_url || null,
               source_credit: form.source_credit || null,
+              bio_en: form.bio_en || null,
+              sangh_text: form.sangh_text || null,
+              chaturmas_text: form.chaturmas_text || null,
+              updates_text: form.updates_text || null,
+              source_references: form.source_references || null,
+              birth_date_indian: form.birth_date_indian || null,
+              acharya_pad_date: form.acharya_pad_date || null,
+              acharya_pad_place: form.acharya_pad_place || null,
+              acharya_pad_by: form.acharya_pad_by || null,
             },
           });
           // Only when it actually changed — re-posting an unchanged photo would
@@ -832,11 +859,42 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
         <label className="field"><span>Family who took diksha</span>
           <textarea value={form.family_initiated} onChange={set('family_initiated')} rows={2} /></label>
 
-        <label className="field"><span>Bio (English)</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
+        {/* THE LIFE, as the devotee profile actually renders it. This box was
+            bound to `bio`, a column no profile carries; every one of the 1,876
+            readable lives is in `bio_en`. A curator's biography therefore went
+            somewhere the life card never reads. */}
+        <label className="field"><span>The life (English)</span>
+          <textarea value={form.bio_en} onChange={set('bio_en')} rows={4} /></label>
         {/* The Hindi life was editable NOWHERE, and it is the one most devotees
             read — the profile prefers it for every Indic locale. */}
-        <label className="field"><span>Bio (Hindi / Devanagari)</span>
-          <textarea value={form.bio_hi} onChange={set('bio_hi')} rows={3} lang="hi" /></label>
+        <label className="field"><span>The life (Hindi / Devanagari)</span>
+          <textarea value={form.bio_hi} onChange={set('bio_hi')} rows={4} lang="hi" /></label>
+        {/* The legacy one-liner. Kept editable because the devotee profile still
+            renders `about || bio` as a separate short card above the life. */}
+        <label className="field"><span>Short bio (legacy)</span>
+          <textarea value={form.bio} onChange={set('bio')} rows={2} /></label>
+
+        {/* The long texts the devotee profile turns into its own cards: the
+            lineage tree, the varshayog table and the updates. A curator could
+            see them on the public profile and correct them nowhere. */}
+        <label className="field"><span>Lineage text (parampara)</span>
+          <textarea value={form.sangh_text} onChange={set('sangh_text')} rows={3} /></label>
+        <label className="field"><span>Chaturmas text (varshayog)</span>
+          <textarea value={form.chaturmas_text} onChange={set('chaturmas_text')} rows={3} /></label>
+        <label className="field"><span>Updates text</span>
+          <textarea value={form.updates_text} onChange={set('updates_text')} rows={3} /></label>
+
+        <label className="field"><span>Acharya pad date</span>
+          <input type="date" value={form.acharya_pad_date} onChange={set('acharya_pad_date')} /></label>
+        <label className="field"><span>Acharya pad place</span>
+          <input value={form.acharya_pad_place} onChange={set('acharya_pad_place')} /></label>
+        <label className="field"><span>Acharya pad conferred by</span>
+          <input value={form.acharya_pad_by} onChange={set('acharya_pad_by')} /></label>
+        <label className="field"><span>Birth date (Indian calendar)</span>
+          <input value={form.birth_date_indian} onChange={set('birth_date_indian')}
+            placeholder="e.g. Sharad Purnima, Vikram Samvat 2003" /></label>
+        <label className="field"><span>Source references</span>
+          <textarea value={form.source_references} onChange={set('source_references')} rows={2} /></label>
         <label className="field"><span>About</span>
           <textarea value={form.about} onChange={set('about')} rows={2} /></label>
         <label className="field"><span>Source URL</span>
