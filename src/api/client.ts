@@ -165,3 +165,67 @@ export function formatDate(d: string | Date | null | undefined): string {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
+
+/**
+ * Authenticated multipart upload, with progress.
+ *
+ * XMLHttpRequest rather than fetch, for one reason: fetch cannot report upload
+ * progress. A granth is a scanned book — tens of megabytes on an Indian office
+ * connection — and a Save button that sits there for two minutes with no bar is
+ * a button people press again, which is how you get duplicate uploads.
+ *
+ * Content-Type is deliberately NOT set. The browser must write it itself so it
+ * can append the multipart boundary; setting it here produces a body the server
+ * cannot parse, with a 400 that blames the file.
+ */
+export async function apiUpload<T>(
+  path: string,
+  form: FormData,
+  onProgress?: (fraction: number) => void,
+): Promise<T> {
+  const send = (token?: string | null) =>
+    new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', BASE + path);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      };
+      xhr.onerror = () =>
+        reject(new ApiRequestError(0, { code: 'NETWORK', message: 'The upload could not reach the server.' }));
+      xhr.onload = () => {
+        const json = (() => {
+          try {
+            return JSON.parse(xhr.responseText);
+          } catch {
+            return null;
+          }
+        })();
+        if (xhr.status >= 200 && xhr.status < 300 && json?.success) {
+          resolve(json.data as T);
+        } else {
+          reject(
+            new ApiRequestError(
+              xhr.status,
+              json?.error ?? { code: 'NETWORK', message: `HTTP ${xhr.status}` },
+            ),
+          );
+        }
+      };
+      xhr.send(form);
+    });
+
+  const session = loadSession();
+  try {
+    return await send(session?.access_token);
+  } catch (e) {
+    // One transparent refresh, as `api()` does. A 40 MB re-send is expensive,
+    // but a curator retyping the whole form is worse.
+    if (e instanceof ApiRequestError && e.status === 401 && session) {
+      const token = await refreshAccessToken();
+      if (token) return send(token);
+    }
+    throw e;
+  }
+}

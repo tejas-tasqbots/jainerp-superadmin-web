@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Compass, CopyCheck, Landmark, LayoutDashboard, LogOut, MessageSquareQuote, Package, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
+import { Compass, CopyCheck, Landmark, Library, LayoutDashboard, LogOut, MessageSquareQuote, Package, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
@@ -13,6 +13,7 @@ import { PlansPage } from './pages/PlansPage';
 import { RegistrationsPage } from './pages/RegistrationsPage';
 import { CustomRequestsPage } from './pages/CustomRequestsPage';
 import { SectReadinessPage } from './pages/SectReadinessPage';
+import { LibraryPage } from './pages/LibraryPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TenantDetailPage } from './pages/TenantDetailPage';
@@ -38,6 +39,9 @@ const navItems = [
   { to: '/custom-requests', label: 'Custom Requests', icon: <MessageSquareQuote size={18} /> },
   { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
   { to: '/sect-readiness', label: 'Sampradaya', icon: <Compass size={18} /> },
+  // Platform content, like Sampradaya beside it — no temple owns the granth
+  // catalogue, so no temple admin curates it.
+  { to: '/library', label: 'Library', icon: <Library size={18} /> },
   { to: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
 ];
 
@@ -90,6 +94,7 @@ function Layout() {
           <Route path="/custom-requests" element={<CustomRequestsPage />} />
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/sect-readiness" element={<SectReadinessPage />} />
+          <Route path="/library" element={<LibraryPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
