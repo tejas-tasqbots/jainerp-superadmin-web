@@ -21,6 +21,16 @@ interface ChangeRequest {
   field: string;
   current_value: string | null;
   requested_value: string | null;
+  /**
+   * What the request DOES (migration 078 §2). 'set_field' is the default and
+   * is what every row written before 078 is, so an older row needs no
+   * migration to keep meaning what it meant.
+   */
+  operation?: 'set_field' | 'create' | 'update' | 'delete';
+  /** 'profile_photo' today; null for a plain column change. */
+  entity?: string | null;
+  /** The proposed row. For a photograph, `{ photo_base64, photo_mime }`. */
+  payload?: Record<string, unknown> | null;
   reason: string | null;
   status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
   requested_by_name: string | null;
@@ -55,6 +65,30 @@ const FIELD_LABELS: Record<string, string> = {
   name_en: 'Name (English)',
   name_hi: 'Name (Hindi)',
   samadhi_date: 'Samadhi date',
+  // Everything a sangh representative may now ask to change (2026-09). Before
+  // this, a representative wrote most of these straight onto the profile with
+  // no review; they are all requests now, and a queue that showed `sub_sect`
+  // and `name_before_diksha` as raw column names to the person approving them
+  // is a queue nobody can work quickly.
+  type: 'Rank',
+  pad: 'Post held',
+  sect: 'Sect',
+  sub_sect: 'Gaccha / panth',
+  lineage: 'Lineage',
+  diksha_year: 'Diksha year',
+  diksha_date: 'Diksha date',
+  diksha_place: 'Diksha place',
+  birth_date: 'Birth date',
+  tithi_note: 'Tithi',
+  name_before_diksha: 'Name before diksha',
+  fathers_name: "Father's name",
+  mothers_name: "Mother's name",
+  education: 'Study',
+  honours: 'Conferred titles',
+  bio: 'Short bio',
+  about: 'About',
+  languages: 'Languages',
+  photo: 'Photograph',
 };
 
 /**
@@ -217,9 +251,46 @@ export function ChangeRequestsPage() {
             <strong>{review.row.subject_label || review.row.subject_id}</strong> —{' '}
             {FIELD_LABELS[review.row.field] ?? review.row.field}
           </p>
-          <p className="mono">
-            {review.row.current_value || '—'} → <strong>{review.row.requested_value}</strong>
-          </p>
+          {/* ── A PHOTOGRAPH IS REVIEWED BY LOOKING AT IT ──────────────────
+              A photo request has no before/after string to read: rendering
+              `current_value → requested_value` for one shows "Set profile
+              photograph → null", which tells the reviewer nothing and invites
+              them to approve on trust.
+
+              Photographs of ascetics are a sensitive matter in this tradition
+              (doc-v2/Images_And_Photos.md) — some Sadhu-Sadhvi permit none at
+              all — so the whole point of routing them through this queue is
+              that a person SEES the image first. */}
+          {review.row.entity === 'profile_photo' ? (
+            <div style={{ margin: '10px 0' }}>
+              {review.row.operation === 'delete' ? (
+                <p className="muted">
+                  This removes the photograph currently on the profile. The profile
+                  itself is kept.
+                </p>
+              ) : (
+                <>
+                  <img
+                    src={String(review.row.payload?.photo_base64 ?? '')}
+                    alt="Proposed profile photograph"
+                    style={{
+                      maxWidth: 220, maxHeight: 260, objectFit: 'contain',
+                      borderRadius: 10, border: '1px solid #e2e8f0', background: '#f8fafc',
+                    }}
+                  />
+                  <p className="muted" style={{ marginTop: 6 }}>
+                    Approving publishes exactly this image. It is stored with the
+                    request, so it cannot be swapped between your looking at it and
+                    your approving it.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <p className="mono">
+              {review.row.current_value || '—'} → <strong>{review.row.requested_value}</strong>
+            </p>
+          )}
           {review.row.reason && <p className="muted">Reason given: {review.row.reason}</p>}
           {review.mode === 'approve' && SIDE_EFFECTS[review.row.field] && (
             <p style={{

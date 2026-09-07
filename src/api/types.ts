@@ -287,8 +287,20 @@ export interface MaharajProfile {
   current_state: string | null;
   diksha_year: number | null;
   guru_name: string | null;
+  /** PUBLICATION: may devotees see this profile at all? Not the blue tick. */
   verified: boolean;
   verified_at: string | null;
+  /**
+   * ATTESTATION: has a Super Admin read this record against a source?
+   *
+   * The two were one column until migration 078, and migration 050 set
+   * `verified` on 2,997 profiles scraped from public directories so the
+   * directory could go live — which had the side effect of claiming every
+   * scraped name and date had been checked. This is the checked one, and it is
+   * the only thing that draws a blue tick in the devotee app.
+   */
+  verification_state: 'unverified' | 'verified';
+  data_verified_at: string | null;
   followers_count: number;
   created_at: string;
   /** Sangh membership (migration 047). Null is normal — many are unaffiliated. */

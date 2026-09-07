@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { ErrorBox } from '../components/ui';
+import { ErrorBox, Modal } from '../components/ui';
 
 /**
  * Ascetics who may be one person recorded twice.
@@ -24,9 +24,21 @@ import { ErrorBox } from '../components/ui';
  * people, not of one. The bottom of this list is as informative as the top:
  * those are the ones to leave alone.
  *
- * Merging uses the tools that already exist — "Set sangh" on the Sadhu-Sadhvi
- * list to move members across, then Delete on whichever record the curator has
- * decided is the duplicate.
+ * ── MERGING (2026-09) ───────────────────────────────────────────────────────
+ * There is now a real Merge, because the previous instruction — "Set sangh to
+ * move members across, then Delete the duplicate" — was not a merge. Delete
+ * CASCADES: it took the losing profile's locations, followers, representatives,
+ * events and diksha stages with it, so the curator was told to destroy exactly
+ * the data a merge is supposed to preserve, and the only thing that moved
+ * across was whatever they retyped by hand.
+ *
+ * `POST /admin/maharaj/merge` moves every child row onto the keeper, fills the
+ * keeper's empty fields from the loser, and snapshots the whole losing row into
+ * `sant_merges` first — so a wrong merge is recoverable and "where did this
+ * profile go?" has an answer.
+ *
+ * Migration 078 §3 already merged the 15 pairs where nothing disagreed AND the
+ * diksha guru matched. What is left on this page needs a person.
  */
 interface DupProfile {
   id: string;
@@ -51,6 +63,26 @@ export function DuplicatesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [minConfidence, setMinConfidence] = useState(0);
+  /** The keeper chosen within one group. Keyed by group so two open groups do not fight. */
+  const [keepBy, setKeepBy] = useState<Record<string, string>>({});
+  const [merging, setMerging] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ keep: DupProfile; drop: DupProfile } | null>(null);
+
+  async function merge(keep: DupProfile, drop: DupProfile) {
+    setMerging(drop.id);
+    try {
+      await api('/admin/maharaj/merge', {
+        method: 'POST',
+        body: { keep_id: keep.id, merge_id: drop.id },
+      });
+      setConfirm(null);
+      load();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setMerging(null);
+    }
+  }
 
   const load = useCallback(() => {
     setLoading(true);
@@ -79,9 +111,15 @@ export function DuplicatesPage() {
         usually two ascetics.
       </p>
       <p className="muted" style={{ maxWidth: 760 }}>
-        To merge: use <strong>Set sangh</strong> on the Sadhu-Sadhvi list to move any members
-        across, then <strong>Delete profile</strong> on the record you have decided is the
-        duplicate. Nothing on this page changes any data.
+        To merge: pick the record to <strong>keep</strong> in each group, then press
+        <strong> Merge into kept</strong> on the row that is the duplicate. Every location,
+        follower, representative and event moves across, any field the kept record is missing
+        is filled from the other, and the whole losing row is saved first — so a mistake can
+        be undone from <span className="mono">sant_merges</span>.
+      </p>
+      <p className="muted" style={{ maxWidth: 760 }}>
+        Merge only what you are sure of. Two rows with different diksha years, different gurus
+        or different cities are almost always two different ascetics.
       </p>
 
       <label className="field" style={{ maxWidth: 320 }}>
@@ -120,7 +158,21 @@ export function DuplicatesPage() {
               {g.profiles.map((p) => (
                 <tr key={p.id}>
                   <td>
-                    {p.name_en ?? p.name}
+                    {/* Choosing the KEEPER first, and separately from pressing
+                        Merge, is deliberate. A single "merge into…" dropdown on
+                        each row makes the direction easy to get backwards, and
+                        the direction is the whole decision: get it wrong and the
+                        richer record is the one that disappears. */}
+                    <label style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                      <input
+                        type="radio"
+                        name={`keep-${g.key}`}
+                        checked={(keepBy[g.key] ?? g.profiles[0]?.id) === p.id}
+                        onChange={() => setKeepBy((k) => ({ ...k, [g.key]: p.id }))}
+                        aria-label={`Keep ${p.name_en ?? p.name}`}
+                      />
+                      <span>{p.name_en ?? p.name}</span>
+                    </label>
                     {p.name_hi && <div className="muted" style={{ fontSize: 11 }}>{p.name_hi}</div>}
                     {p.is_samadhistha && (
                       <div className="muted" style={{ fontSize: 11 }}>samadhistha</div>
@@ -132,13 +184,28 @@ export function DuplicatesPage() {
                   <td style={{ fontSize: 12 }}>{p.sangh_name ?? <span className="muted">—</span>}</td>
                   <td>{p.has_photo ? 'yes' : <span className="muted">no</span>}</td>
                   <td>
-                    {/* Opens the Sadhu-Sadhvi list filtered to this name, where
-                        Manage and Delete already live. Deliberately not a
-                        delete button here: this page is for deciding, not for
-                        acting in one click on a judgement it cannot make. */}
-                    <a className="btn sm" href={`/maharaj?q=${encodeURIComponent(p.name_en ?? p.name)}`}>
-                      Open
-                    </a>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {/* Opens the Sadhu-Sadhvi list filtered to this name,
+                          where Manage and Delete already live. */}
+                      <a className="btn sm" href={`/maharaj?q=${encodeURIComponent(p.name_en ?? p.name)}`}>
+                        Open
+                      </a>
+                      {/* Absent on the row that IS the keeper — a "merge this
+                          into itself" button is a refusal waiting to happen. */}
+                      {(keepBy[g.key] ?? g.profiles[0]?.id) !== p.id && (
+                        <button
+                          className="btn sm"
+                          disabled={merging === p.id}
+                          onClick={() => {
+                            const keepId = keepBy[g.key] ?? g.profiles[0]?.id;
+                            const keep = g.profiles.find((x) => x.id === keepId);
+                            if (keep) setConfirm({ keep, drop: p });
+                          }}
+                        >
+                          {merging === p.id ? 'Merging…' : 'Merge into kept'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -146,6 +213,45 @@ export function DuplicatesPage() {
           </table>
         </div>
       ))}
+
+      {/* A merge removes a profile a devotee may have followed and a
+          representative may manage, so it is confirmed by name — never by row
+          position, which is what a bare "are you sure?" amounts to. */}
+      {confirm && (
+        <Modal title="Merge these two profiles" onClose={() => setConfirm(null)}>
+          <p>
+            <strong>{confirm.drop.name_en ?? confirm.drop.name}</strong> will be merged into{' '}
+            <strong>{confirm.keep.name_en ?? confirm.keep.name}</strong> and will no longer exist.
+          </p>
+          <p className="muted">
+            Locations, followers, representatives, events and diksha stages move to the kept
+            profile. Anything the kept profile is missing — a photograph, a biography, a
+            diksha year — is filled in from the other. The complete losing record is saved to{' '}
+            <span className="mono">sant_merges</span> first.
+          </p>
+          {confirm.keep.diksha_year && confirm.drop.diksha_year
+            && confirm.keep.diksha_year !== confirm.drop.diksha_year && (
+            <p style={{
+              margin: '8px 0', padding: 10, borderRadius: 8,
+              background: '#fef2f2', border: '1px solid #fecaca', fontSize: 13,
+            }}>
+              <strong>These record different diksha years</strong>{' '}
+              ({confirm.keep.diksha_year} and {confirm.drop.diksha_year}). That is usually
+              evidence of two different ascetics who share a name, not of one entered twice.
+            </p>
+          )}
+          <div className="actions">
+            <button className="btn" onClick={() => setConfirm(null)}>Cancel</button>
+            <button
+              className="btn primary"
+              disabled={!!merging}
+              onClick={() => merge(confirm.keep, confirm.drop)}
+            >
+              {merging ? 'Merging…' : 'Merge'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

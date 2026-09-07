@@ -285,6 +285,22 @@ export function MaharajPage() {
                 {m.is_samadhistha
                   ? <span className="muted">Samadhistha</span>
                   : <Badge value={m.verified} />}
+                {/* ── TWO DIFFERENT CLAIMS, SHOWN SEPARATELY ─────────────────
+                    `verified` (the badge above) is whether devotees can SEE
+                    this profile. `verification_state` is whether anyone has
+                    read it against a source, and it is the only thing that
+                    draws a blue tick in the devotee app.
+
+                    They were one column until migration 078, and migration 050
+                    set `verified` on 2,997 scraped rows so the directory could
+                    go live — which silently made the badge assert that names
+                    nobody had checked were correct. Showing one word for both
+                    is how that happened, so they are two lines now. */}
+                <div style={{ fontSize: 11, marginTop: 2 }}>
+                  {m.verification_state === 'verified'
+                    ? <span style={{ color: '#0284c7', fontWeight: 600 }}>✓ data checked</span>
+                    : <span className="muted">data not checked</span>}
+                </div>
                 <div className="muted" style={{ fontSize: 11 }}>{formatDate(m.created_at)}</div>
               </td>
               <td>
@@ -292,13 +308,24 @@ export function MaharajPage() {
                 {!m.verified ? (
                   <button className="btn sm primary" onClick={() => run(() =>
                     api(`/admin/maharaj/${m.id}/verify`, { method: 'PATCH', body: { verified: true } }),
-                    `${m.name} is now verified and visible to devotees.`,
-                  )}>Verify</button>
+                    `${m.name} is now visible to devotees.`,
+                  )}>Publish</button>
                 ) : (
                   <button className="btn sm" onClick={() => run(() =>
                     api(`/admin/maharaj/${m.id}/verify`, { method: 'PATCH', body: { verified: false } }),
-                    `${m.name} is no longer verified — hidden from devotees.`,
-                  )}>Un-verify</button>
+                    `${m.name} is hidden from devotees.`,
+                  )}>Un-publish</button>
+                )}{' '}
+                {m.verification_state === 'verified' ? (
+                  <button className="btn sm" onClick={() => run(() =>
+                    api(`/admin/maharaj/${m.id}/attest`, { method: 'PATCH', body: { verified: false } }),
+                    `${m.name}: the blue tick has been withdrawn.`,
+                  )}>Withdraw tick</button>
+                ) : (
+                  <button className="btn sm" onClick={() => run(() =>
+                    api(`/admin/maharaj/${m.id}/attest`, { method: 'PATCH', body: { verified: true } }),
+                    `${m.name} is marked as checked — devotees now see a blue tick.`,
+                  )}>Mark checked</button>
                 )}
               </td>
             </tr>
