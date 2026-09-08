@@ -134,13 +134,25 @@ jobs:
             exit 1
           fi
 
-          echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          # Fail at the cause. The remote body runs `set -uo pipefail` with no
+          # -e, so an unguarded login failure used to fall straight through to
+          # the health check below - which PASSES, because the OLD container is
+          # still serving. On 2026-09-08 that printed "health OK after 1 tries"
+          # seconds before the tag guard failed the job, burying a dead
+          # credential under what looked like a deploy problem.
+          if ! echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin; then
+            echo "::error::docker login to ghcr.io failed on the box. GHCR_PAT is expired or missing read:packages, or GHCR_USER is wrong. Nothing below this can succeed."
+            exit 1
+          fi
 
           # Start exactly the image this run built, not whatever :latest points
           # at by the time compose gets there.
           export SUPERADMIN_WEB_TAG="$TAG"
           COMPOSE="docker compose -f docker-compose.aws.yml --env-file .env.aws"
-          $COMPOSE pull superadmin-web
+          if ! $COMPOSE pull superadmin-web; then
+            echo "::error::could not pull $TAG. That is registry access or a missing tag, not the app."
+            exit 1
+          fi
 
           # Recreate, retrying once on the transient "No such container" race.
           # --no-deps so recreating this service cannot drag its depends_on
