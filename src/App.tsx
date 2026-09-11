@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Compass, CopyCheck, Inbox, Landmark, LayoutDashboard, Library, LogOut, MessageSquareQuote, Package, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
+import { Compass, CopyCheck, Inbox, Landmark, LayoutDashboard, Library, LogOut, MessageSquareQuote, Package, Presentation, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
@@ -13,6 +13,7 @@ import { SantContentPage } from './pages/SantContentPage';
 import { PlansPage } from './pages/PlansPage';
 import { RegistrationsPage } from './pages/RegistrationsPage';
 import { CustomRequestsPage } from './pages/CustomRequestsPage';
+import { DemoRequestsPage } from './pages/DemoRequestsPage';
 import { SectReadinessPage } from './pages/SectReadinessPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
@@ -39,6 +40,8 @@ const navItems = [
   { to: '/donation-accounts', label: 'Donation Accounts', icon: <Landmark size={18} /> },
   { to: '/registrations', label: 'Registrations', icon: <UserPlus size={18} /> },
   { to: '/custom-requests', label: 'Custom Requests', icon: <MessageSquareQuote size={18} /> },
+  // The third lead queue, beside the other two: the website's "Request a demo".
+  { to: '/demo-requests', label: 'Demo Requests', icon: <Presentation size={18} /> },
   { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
   { to: '/sect-readiness', label: 'Sampradaya', icon: <Compass size={18} /> },
   // Platform content, like Sampradaya beside it — no temple owns the granth
@@ -95,6 +98,7 @@ function Layout() {
           <Route path="/donation-accounts" element={<DonationAccountsPage />} />
           <Route path="/registrations" element={<RegistrationsPage />} />
           <Route path="/custom-requests" element={<CustomRequestsPage />} />
+          <Route path="/demo-requests" element={<DemoRequestsPage />} />
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/sect-readiness" element={<SectReadinessPage />} />
           <Route path="/library" element={<LibraryPage />} />
