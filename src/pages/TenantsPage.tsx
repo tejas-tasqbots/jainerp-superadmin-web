@@ -322,13 +322,17 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
         <label className="field"><span>Mandir email</span><input name="mandir_email" type="email" value={form.mandir_email} onChange={set('mandir_email')} /></label>
         <label className="field"><span>Website</span><input name="website" value={form.website} onChange={set('website')} placeholder="https://…" /></label>
 
+        {/* The API checks each of these (common/statutory-id.dto): PAN shape,
+            GSTIN state code + check character, TAN shape, 80G/12AB as the
+            16-character URN. Leave any the trust does not hold empty — "0"
+            or "NA" is refused, and a "0" in GSTIN used to switch GST on. */}
         <h4 className="form-section">Legal & tax (for 80G receipts)</h4>
-        <label className="field"><span>GSTIN</span><input name="gstin" value={form.gstin} onChange={set('gstin')} maxLength={15} placeholder="15 chars" /></label>
-        <label className="field"><span>PAN</span><input name="pan" value={form.pan} onChange={set('pan')} maxLength={10} placeholder="AAAAA9999A" /></label>
-        <label className="field"><span>TAN</span><input name="tan" value={form.tan} onChange={set('tan')} /></label>
-        <label className="field"><span>80G reg. number</span><input name="reg_80g_number" value={form.reg_80g_number} onChange={set('reg_80g_number')} /></label>
-        <label className="field"><span>12A reg. number</span><input name="reg_12a_number" value={form.reg_12a_number} onChange={set('reg_12a_number')} /></label>
-        <label className="field"><span>12AB reg. number</span><input name="reg_12ab_number" value={form.reg_12ab_number} onChange={set('reg_12ab_number')} /></label>
+        <label className="field"><span>PAN</span><input name="pan" value={form.pan} onChange={set('pan')} maxLength={10} placeholder="AAATR1234C" /></label>
+        <label className="field"><span>GSTIN (only if GST-registered)</span><input name="gstin" value={form.gstin} onChange={set('gstin')} maxLength={15} placeholder="27AAATR1234C1Z0" /></label>
+        <label className="field"><span>TAN (optional)</span><input name="tan" value={form.tan} onChange={set('tan')} maxLength={10} placeholder="MUMT12345A" /></label>
+        <label className="field"><span>80G registration (URN)</span><input name="reg_80g_number" value={form.reg_80g_number} onChange={set('reg_80g_number')} maxLength={16} placeholder="AAATR1234CF20214" /></label>
+        <label className="field"><span>12A reg. number (before 2021)</span><input name="reg_12a_number" value={form.reg_12a_number} onChange={set('reg_12a_number')} maxLength={50} /></label>
+        <label className="field"><span>12AB registration (URN)</span><input name="reg_12ab_number" value={form.reg_12ab_number} onChange={set('reg_12ab_number')} maxLength={16} placeholder="AAATR1234CE20214" /></label>
 
         <h4 className="form-section">Bank & UPI (receipt payment details)</h4>
         <label className="field"><span>UPI ID</span><input name="upi_id" value={form.upi_id} onChange={set('upi_id')} placeholder="mandir@upi" /></label>
