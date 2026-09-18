@@ -170,6 +170,7 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
     mandir_mobile: '', mandir_email: '', website: '',
     // legal / tax
     gstin: '', pan: '', tan: '', reg_80g_number: '', reg_12a_number: '', reg_12ab_number: '',
+    registration_number: '', darpan_number: '',
     // bank / UPI
     upi_id: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_name: '',
     // sampradaya (migration 032) — only meaningful for a Jain trust
@@ -236,6 +237,7 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
                 mandir_mobile: form.mandir_mobile, mandir_email: form.mandir_email, website: form.website,
                 gstin: form.gstin, pan: form.pan, tan: form.tan,
                 reg_80g_number: form.reg_80g_number, reg_12a_number: form.reg_12a_number, reg_12ab_number: form.reg_12ab_number,
+                registration_number: form.registration_number, darpan_number: form.darpan_number,
                 upi_id: form.upi_id, bank_account_name: form.bank_account_name, bank_account_no: form.bank_account_no,
                 bank_ifsc: form.bank_ifsc, bank_name: form.bank_name,
               }),
@@ -331,6 +333,8 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
         <label className="field"><span>GSTIN (only if GST-registered)</span><input name="gstin" value={form.gstin} onChange={set('gstin')} maxLength={15} placeholder="27AAATR1234C1Z0" /></label>
         <label className="field"><span>TAN (optional)</span><input name="tan" value={form.tan} onChange={set('tan')} maxLength={10} placeholder="MUMT12345A" /></label>
         <label className="field"><span>80G registration (URN)</span><input name="reg_80g_number" value={form.reg_80g_number} onChange={set('reg_80g_number')} maxLength={16} placeholder="AAATR1234CF20214" /></label>
+        <label className="field"><span>Registration No.</span><input name="registration_number" value={form.registration_number} onChange={set('registration_number')} maxLength={60} placeholder="COOP/2021/UDAIPUR/201746" /></label>
+        <label className="field"><span>Darpan Registration No.</span><input name="darpan_number" value={form.darpan_number} onChange={set('darpan_number')} maxLength={40} placeholder="RJ/2024/2187120" /></label>
         <label className="field"><span>12A reg. number (before 2021)</span><input name="reg_12a_number" value={form.reg_12a_number} onChange={set('reg_12a_number')} maxLength={50} /></label>
         <label className="field"><span>12AB registration (URN)</span><input name="reg_12ab_number" value={form.reg_12ab_number} onChange={set('reg_12ab_number')} maxLength={16} placeholder="AAATR1234CE20214" /></label>
 

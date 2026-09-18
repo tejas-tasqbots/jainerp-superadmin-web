@@ -332,6 +332,8 @@ function RegistrationDetail({ id }: { id: string }) {
           <Info label="Type" value={row.temple_type} />
           <Info label="PAN / GSTIN" value={[p.pan, p.gstin].filter(Boolean).join(' · ') || '—'} />
           <Info label="80G / 12A" value={[p.reg_80g_number, p.reg_12a_number].filter(Boolean).join(' · ') || '—'} />
+          <Info label="Registration No." value={p.registration_number || '—'} />
+          <Info label="Darpan Reg. No." value={p.darpan_number || '—'} />
           <Info label="Plan" value={row.plan_name ? `${row.plan_name} · ${row.billing_cycle} · ${row.tenancy_tier}` : '—'} />
           <Info label="Modules" value={row.modules?.length ? row.modules.join(', ') : '—'} />
           <Info label="Subtotal" value={formatPaise(row.subtotal_paise)} />
