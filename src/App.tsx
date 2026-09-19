@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Compass, CopyCheck, Inbox, Landmark, LayoutDashboard, Library, LogOut, MessageSquareQuote, Package, Presentation, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
+import { Compass, CopyCheck, FileText, Inbox, Landmark, LayoutDashboard, Library, LogOut, MessageSquareQuote, Package, Presentation, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
@@ -9,6 +9,7 @@ import { SanghsPage } from './pages/SanghsPage';
 import { DuplicatesPage } from './pages/DuplicatesPage';
 import { DonationAccountsPage } from './pages/DonationAccountsPage';
 import { ChangeRequestsPage } from './pages/ChangeRequestsPage';
+import { TemplateApprovalsPage } from './pages/TemplateApprovalsPage';
 import { SantContentPage } from './pages/SantContentPage';
 import { PlansPage } from './pages/PlansPage';
 import { RegistrationsPage } from './pages/RegistrationsPage';
@@ -33,6 +34,7 @@ const navItems = [
   // one profile, and until now nothing in the console showed them.
   { to: '/maharaj/duplicates', label: 'Duplicates', icon: <CopyCheck size={18} /> },
   { to: '/change-requests', label: 'Change Requests', icon: <ShieldCheck size={18} /> },
+  { to: '/template-approvals', label: 'Receipt Designs', icon: <FileText size={18} /> },
   { to: '/sant-content', label: 'Sant Content', icon: <Inbox size={18} /> },
   // Sits beside Change Requests because it is the same job: approving something
   // a trust cannot approve for itself, where the cost of not looking is a donor
@@ -94,6 +96,7 @@ function Layout() {
           <Route path="/sanghs" element={<SanghsPage />} />
           <Route path="/maharaj/duplicates" element={<DuplicatesPage />} />
           <Route path="/change-requests" element={<ChangeRequestsPage />} />
+          <Route path="/template-approvals" element={<TemplateApprovalsPage />} />
           <Route path="/sant-content" element={<SantContentPage />} />
           <Route path="/donation-accounts" element={<DonationAccountsPage />} />
           <Route path="/registrations" element={<RegistrationsPage />} />
