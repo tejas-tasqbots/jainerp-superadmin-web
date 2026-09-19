@@ -139,7 +139,7 @@ export function DonationAccountsPage() {
 
       <ErrorBox error={error} />
 
-      <table className="table">
+      <table className="data">
         <thead>
           <tr>
             <th>Trust</th>
@@ -203,22 +203,34 @@ export function DonationAccountsPage() {
                   // and the API refuses it too, because an approval on typed
                   // digits alone is the failure this queue exists to prevent.
                   //
-                  // The button used to be disabled outright, which read as a
-                  // broken page: a greyed "Review & verify" with the reason
-                  // hidden in a `title` tooltip nobody hovers. A reviewer who
-                  // cannot approve can still usefully look at what the trust
-                  // typed, so let them, and say why it stops there.
-                  <>
+                  // But REJECTING needs no document, and that is why it is here
+                  // rather than only on a verified account. A reviewer looking
+                  // at a trust whose account holder is a person's name — the
+                  // case this page's own subtitle warns about — can see the
+                  // problem without a passbook, and used to have no way to say
+                  // so: the dialog's only working button was Cancel, reported as
+                  // "why in the donation account review is there if I cant
+                  // apporve or reject".
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     <button
                       className={r.has_proof ? 'btn primary sm' : 'btn sm'}
                       onClick={() => void openReview(r, 'verify')}
                     >
                       {r.has_proof ? 'Review & verify' : 'Review'}
                     </button>
+                    <button
+                      className="btn danger sm"
+                      onClick={() => void openReview(r, 'reject')}
+                      title="Send it back to the trust with a reason"
+                    >
+                      Reject
+                    </button>
                     {!r.has_proof && (
-                      <div className="muted small">Waiting on a passbook or statement page</div>
+                      <div className="muted small" style={{ flexBasis: '100%' }}>
+                        Waiting on a passbook or statement page
+                      </div>
                     )}
-                  </>
+                  </div>
                 )}
                 {r.is_verified && (
                   <button className="btn danger sm" onClick={() => void openReview(r, 'reject')}>
@@ -233,7 +245,14 @@ export function DonationAccountsPage() {
 
       {review && (
         <Modal
-          title={review.mode === 'verify' ? 'Verify donation account' : 'Withdraw verification'}
+          // Three different decisions, three different titles. "Withdraw
+          // verification" on an account that was never verified is confusing on
+          // its own terms.
+          title={
+            review.mode === 'verify' ? 'Verify donation account'
+              : review.row.is_verified ? 'Withdraw verification'
+                : 'Send this account back to the trust'
+          }
           onClose={() => setReview(null)}
         >
           <p>
@@ -292,14 +311,17 @@ export function DonationAccountsPage() {
             <p className="muted">
               No passbook or statement page has been uploaded, so there is nothing to check these
               details against. Verification stays blocked until the trust uploads one — ask them to
-              add it under Settings → Donor Payments.
+              add it under Settings → Donor Payments. You can still reject the account from the list
+              if what the trust has typed is wrong on its face.
             </p>
           )}
 
           <p className="muted small">
             {review.mode === 'verify'
               ? 'Devotees will be shown these details. Approving records these exact digits — if the trust edits the account afterwards it returns here automatically.'
-              : 'Devotees stop seeing this account immediately. The reason is shown to the trust, so make it something they can act on.'}
+              : review.row.is_verified
+                ? 'Devotees stop seeing this account immediately. The reason is shown to the trust, so make it something they can act on.'
+                : 'Nothing was being shown to devotees, so nothing changes for them. The reason goes to the trust — say what is wrong with the account or what document you need, because this is the only thing they will see.'}
           </p>
           <label className="field">
             <span>{review.mode === 'verify' ? 'Note (optional)' : 'Reason (required)'}</span>
@@ -321,7 +343,8 @@ export function DonationAccountsPage() {
               }
               onClick={submit}
             >
-              {review.mode === 'verify' ? 'Verify' : 'Withdraw'}
+              {review.mode === 'verify' ? 'Verify'
+                : review.row.is_verified ? 'Withdraw' : 'Reject'}
             </button>
           </div>
         </Modal>

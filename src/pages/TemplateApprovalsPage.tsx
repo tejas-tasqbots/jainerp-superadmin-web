@@ -119,25 +119,35 @@ export function TemplateApprovalsPage() {
     });
   }
 
+  const pending = rows.filter((r) => r.status === 'pending').length;
+
+  // The console's own idiom: `h1` + `Badge`, a `toolbar` of `chip` buttons, a
+  // `table`. The previous version used `page`, `page-head`, `seg` and an
+  // `active` class, none of which exist in styles.css — so the filters rendered
+  // as two words of unstyled text ("Awaiting reviewAll") and the page had no
+  // card around it at all. An unknown className is not an error anywhere in the
+  // toolchain; it is simply nothing.
   return (
-    <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>Receipt Designs</h1>
-          <p className="muted">
-            Designs a trust built for itself. Nothing here prints until it is approved.
-          </p>
-        </div>
-        <div className="seg">
+    <div>
+      <h1>Receipt Designs {pending > 0 && <Badge value={`${pending} to review`} />}</h1>
+      <p className="muted">
+        Designs a trust built for itself, composed from a fixed set of blocks — there is no markup
+        in one, so what you are reading is a composition rather than code. Nothing here prints
+        until it is approved, and the trust keeps printing whatever it had until then.
+      </p>
+      <div>
+        <div className="toolbar">
           {(['pending', 'all'] as const).map((v) => (
             <button
               key={v} type="button" onClick={() => setStatus(v)}
-              className={status === v ? 'active' : ''}
+              className={status === v ? 'chip chip-active' : 'chip'}
               data-testid={`template-filter-${v}`}
-            >{v === 'pending' ? 'Awaiting review' : 'All'}</button>
+            >
+              {v === 'pending' ? `Awaiting review${pending ? ` (${pending})` : ''}` : 'All'}
+            </button>
           ))}
         </div>
-      </header>
+      </div>
 
       <ErrorBox error={error} />
 
@@ -146,7 +156,7 @@ export function TemplateApprovalsPage() {
           {status === 'pending' ? 'Nothing is waiting for review.' : 'No trust has designed a receipt yet.'}
         </p>
       ) : (
-        <table className="table">
+        <table className="data">
           <thead>
             <tr>
               <th>Trust</th>
@@ -175,7 +185,10 @@ export function TemplateApprovalsPage() {
                 <td><Badge value={row.status} /></td>
                 <td>
                   {row.status === 'pending' ? (
-                    <button type="button" onClick={() => openReview(row, 'approved')}>Review</button>
+                    <button
+                      type="button" className="btn primary sm"
+                      onClick={() => openReview(row, 'approved')}
+                    >Review</button>
                   ) : row.review_note ? (
                     <span className="muted" title={row.review_note}>{row.review_note.slice(0, 40)}</span>
                   ) : null}
@@ -216,7 +229,7 @@ export function TemplateApprovalsPage() {
           </dl>
 
           <h3>Blocks, in order</h3>
-          <ol className="blocks">
+          <ol>
             {(reviewing.definition?.blocks ?? []).map((b) => (
               <li key={b}>{BLOCK_LABELS[b] ?? b}</li>
             ))}
@@ -227,7 +240,7 @@ export function TemplateApprovalsPage() {
           {Object.keys(reviewing.definition?.title ?? {}).length ? (
             <>
               <h3>Their title for the document</h3>
-              <ul className="blocks">
+              <ul>
                 {Object.entries(reviewing.definition!.title!).map(([lang, text]) => (
                   <li key={lang}><b>{lang}</b> — {text}</li>
                 ))}
@@ -237,7 +250,7 @@ export function TemplateApprovalsPage() {
           {Object.keys(reviewing.definition?.custom_text ?? {}).length ? (
             <>
               <h3>Their own line on the receipt</h3>
-              <ul className="blocks">
+              <ul>
                 {Object.entries(reviewing.definition!.custom_text!).map(([lang, text]) => (
                   <li key={lang}><b>{lang}</b> — {text}</li>
                 ))}

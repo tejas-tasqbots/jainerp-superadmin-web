@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Compass, CopyCheck, FileText, Inbox, Landmark, LayoutDashboard, Library, LogOut, MessageSquareQuote, Package, Presentation, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
+import { api } from './api/client';
 import { useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
@@ -22,39 +24,143 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TenantDetailPage } from './pages/TenantDetailPage';
 import { TenantsPage } from './pages/TenantsPage';
 
-const navItems = [
-  { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} />, end: true },
-  { to: '/mandirs', label: 'Manage Mandir', icon: <Landmark size={18} /> },
-  { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
-  { to: '/maharaj', label: 'Sadhu-Sadhvi', icon: <Sparkles size={18} /> },
-  // Directly under Sadhu-Sadhvi: a sangh is only ever curated with the roster
-  // in mind, and membership itself is set from that page.
-  { to: '/sanghs', label: 'Sanghs', icon: <Users2 size={18} /> },
-  // Beside the roster it curates. 160 name-and-rank groups hold more than
-  // one profile, and until now nothing in the console showed them.
-  { to: '/maharaj/duplicates', label: 'Duplicates', icon: <CopyCheck size={18} /> },
-  { to: '/change-requests', label: 'Change Requests', icon: <ShieldCheck size={18} /> },
-  { to: '/template-approvals', label: 'Receipt Designs', icon: <FileText size={18} /> },
-  { to: '/sant-content', label: 'Sant Content', icon: <Inbox size={18} /> },
-  // Sits beside Change Requests because it is the same job: approving something
-  // a trust cannot approve for itself, where the cost of not looking is a donor
-  // paying money into the wrong account.
-  { to: '/donation-accounts', label: 'Donation Accounts', icon: <Landmark size={18} /> },
-  { to: '/registrations', label: 'Registrations', icon: <UserPlus size={18} /> },
-  { to: '/custom-requests', label: 'Custom Requests', icon: <MessageSquareQuote size={18} /> },
-  // The third lead queue, beside the other two: the website's "Request a demo".
-  { to: '/demo-requests', label: 'Demo Requests', icon: <Presentation size={18} /> },
-  { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
-  { to: '/sect-readiness', label: 'Sampradaya', icon: <Compass size={18} /> },
-  // Platform content, like Sampradaya beside it — no temple owns the granth
-  // catalogue, so no temple admin curates it.
-  { to: '/library', label: 'Library', icon: <Library size={18} /> },
-  { to: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
+/**
+ * The sidebar, in four groups.
+ *
+ * It was a flat list of sixteen, with seven review queues scattered through it:
+ * Change Requests next to Duplicates, Donation Accounts between Sant Content and
+ * Registrations, Demo Requests between Custom Requests and Plans. A reviewer
+ * looking for "what needs me today" had to read the whole list and remember
+ * which entries were queues.
+ *
+ * `queue` marks the ones that hold work, and carries the endpoint their count
+ * comes from. That endpoint is the one the PAGE itself calls - so the badge and
+ * the page can never disagree, and no new query had to be written to be wrong.
+ */
+interface NavItem {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+  end?: boolean;
+  /** A review queue: its badge counts what this endpoint returns. */
+  queue?: string;
+}
+
+const navGroups: { heading: string | null; items: NavItem[] }[] = [
+  {
+    heading: null,
+    items: [
+      { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} />, end: true },
+    ],
+  },
+  {
+    heading: 'Directory',
+    items: [
+      { to: '/mandirs', label: 'Manage Mandir', icon: <Landmark size={18} /> },
+      { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
+      { to: '/maharaj', label: 'Sadhu-Sadhvi', icon: <Sparkles size={18} /> },
+      // Directly under Sadhu-Sadhvi: a sangh is only ever curated with the
+      // roster in mind, and membership itself is set from that page.
+      { to: '/sanghs', label: 'Sanghs', icon: <Users2 size={18} /> },
+    ],
+  },
+  {
+    // The seven decisions a trust cannot make for itself, together. Grouping
+    // them is the whole answer to "too much approval repitative things": the
+    // badges show which ones are empty, and an empty queue never needs opening.
+    heading: 'Needs review',
+    items: [
+      {
+        to: '/change-requests', label: 'Change Requests', icon: <ShieldCheck size={18} />,
+        queue: '/admin/change-requests?status=pending&limit=1',
+      },
+      {
+        to: '/template-approvals', label: 'Receipt Designs', icon: <FileText size={18} />,
+        queue: '/admin/template-approvals?status=pending&limit=1',
+      },
+      {
+        // The cost of not looking here is a donor paying money into a
+        // trustee's personal account.
+        to: '/donation-accounts', label: 'Donation Accounts', icon: <Landmark size={18} />,
+        queue: '/admin/donation-accounts?status=pending',
+      },
+      {
+        to: '/sant-content', label: 'Sant Content', icon: <Inbox size={18} />,
+        queue: '/admin/maharaj/pending-content',
+      },
+      {
+        // Beside the roster it curates. 160 name-and-rank groups hold more than
+        // one profile, and until recently nothing in the console showed them.
+        to: '/maharaj/duplicates', label: 'Duplicates', icon: <CopyCheck size={18} /> },
+    ],
+  },
+  {
+    // Leads, not approvals. They look like queues and are not: nobody is
+    // waiting on a decision, somebody is waiting on a call.
+    heading: 'Enquiries',
+    items: [
+      {
+        to: '/registrations', label: 'Registrations', icon: <UserPlus size={18} />,
+        queue: '/admin/registrations?status=pending&limit=1',
+      },
+      {
+        to: '/custom-requests', label: 'Custom Requests', icon: <MessageSquareQuote size={18} />,
+        queue: '/admin/custom-requests?status=new',
+      },
+      {
+        to: '/demo-requests', label: 'Demo Requests', icon: <Presentation size={18} />,
+        queue: '/admin/demo-requests?status=new&limit=1',
+      },
+    ],
+  },
+  {
+    heading: 'Platform',
+    items: [
+      { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
+      { to: '/sect-readiness', label: 'Sampradaya', icon: <Compass size={18} /> },
+      // Platform content, like Sampradaya beside it - no temple owns the granth
+      // catalogue, so no temple admin curates it.
+      { to: '/library', label: 'Library', icon: <Library size={18} /> },
+      { to: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
+    ],
+  },
 ];
 
 function Layout() {
   const { session, logout } = useAuth();
   const navigate = useNavigate();
+  /**
+   * How many items are waiting in each review queue, keyed by its route.
+   *
+   * Fetched from the endpoint each PAGE already calls, deliberately. A
+   * purpose-built counts endpoint was written first and four of its eight
+   * tables and status filters were guesses — a badge that is wrong about a queue
+   * is worse than no badge, because it sends somebody to look at nothing or
+   * stops them looking at something. Reusing the page's own query cannot
+   * disagree with what the page will show.
+   *
+   * `meta.total` when the endpoint pages (so `limit=1` fetches one row and the
+   * real count), otherwise the array length. A queue that errors simply has no
+   * badge; the sidebar is on every screen and must not be able to break one.
+   */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let live = true;
+    const queues = navGroups.flatMap((g) => g.items).filter((i) => i.queue);
+    void Promise.all(queues.map(async (item) => {
+      try {
+        const r = await api<unknown[]>(item.queue!);
+        const n = r.meta?.total ?? (Array.isArray(r.data) ? r.data.length : 0);
+        return [item.to, Number(n) || 0] as const;
+      } catch {
+        return [item.to, 0] as const;
+      }
+    })).then((pairs) => {
+      if (live) setCounts(Object.fromEntries(pairs));
+    });
+    return () => { live = false; };
+  }, []);
 
   return (
     <div className="layout">
@@ -64,11 +170,28 @@ function Layout() {
           <div className="brand-sub">Super Admin Console</div>
         </div>
         <nav>
-          {navItems.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => (isActive ? 'active' : '')}>
-              <span className="flex-shrink-0">{item.icon}</span>
-              <span className="truncate">{item.label}</span>
-            </NavLink>
+          {navGroups.map((group, gi) => (
+            <div key={group.heading ?? gi} className={gi ? 'mt-4' : ''}>
+              {group.heading && (
+                <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                  {group.heading}
+                </p>
+              )}
+              {group.items.map((item) => (
+                <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => (isActive ? 'active' : '')}>
+                  <span className="flex-shrink-0">{item.icon}</span>
+                  <span className="truncate">{item.label}</span>
+                  {/* Only when there is something. A "0" beside every queue is
+                      the same noise as no number at all — the point is that an
+                      empty queue looks empty from here and never needs opening. */}
+                  {!!item.queue && (counts[item.to] ?? 0) > 0 && (
+                    <span className="ml-auto flex-shrink-0 rounded-full bg-white/20 px-1.5 text-[10px] font-bold leading-4">
+                      {counts[item.to]}
+                    </span>
+                  )}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="whoami">
