@@ -495,6 +495,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
   const [mandateLink, setMandateLink] = useState<string | null>(null);
   /** Invoice being re-priced — only ever an unpaid one. */
   const [repricing, setRepricing] = useState<Invoice | null>(null);
+  const [markingPaid, setMarkingPaid] = useState<Invoice | null>(null);
 
   const load = useCallback(() => {
     api<Invoice[]>(`/admin/tenants/${tenant.id}/invoices`).then((r) => setInvoices(r.data)).catch(setError);
@@ -598,11 +599,9 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                       })}>
                         Payment link
                       </button>{' '}
-                      <button className="btn sm" onClick={() => run(async () => {
-                        await api(`/admin/invoices/${inv.id}/mark-paid`, { method: 'POST', body: { note: 'manual (NEFT)' } });
-                        load();
-                        onChanged('Invoice marked paid');
-                      })}>
+                      {/* Asks HOW it was paid: the method, the reference and
+                          the date all print on the receipt this raises. */}
+                      <button className="btn sm" data-testid={`mark-paid-${inv.invoiceNumber}`} onClick={() => setMarkingPaid(inv)}>
                         Mark paid
                       </button>{' '}
                       <button className="btn sm danger" onClick={() => run(async () => {
@@ -635,6 +634,14 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
         )}
       </div>
 
+      {markingPaid && (
+        <Modal title={`Record payment — ${markingPaid.invoiceNumber}`} onClose={() => setMarkingPaid(null)}>
+          <MarkInvoicePaidForm
+            invoice={markingPaid}
+            onDone={() => { setMarkingPaid(null); load(); onChanged('Invoice marked paid'); }}
+          />
+        </Modal>
+      )}
       {repricing && (
         <Modal title={`Re-price ${repricing.invoiceNumber}`} onClose={() => setRepricing(null)}>
           <RepriceInvoiceForm
@@ -652,6 +659,85 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
  * mandir and they have not paid yet" case. Amounts are entered in rupees and
  * converted here — the API only accepts paise.
  */
+/** Methods that always leave a reference — mirrors REFERENCE_REQUIRED in the API. */
+const REF_REQUIRED = ['razorpay', 'upi', 'card', 'netbanking', 'neft', 'rtgs', 'cheque'];
+const REF_LABEL: Record<string, string> = {
+  upi: 'UPI reference (UTR)',
+  neft: 'NEFT / bank UTR',
+  rtgs: 'RTGS UTR',
+  cheque: 'Cheque number',
+  card: 'Card transaction id',
+  netbanking: 'Bank transaction id',
+  razorpay: 'Razorpay payment id',
+  cash: 'Receipt / voucher no. (optional)',
+  credit: 'Adjustment reference (optional)',
+  manual: 'Reference (optional)',
+};
+
+/**
+ * Record an off-gateway payment against an invoice.
+ *
+ * This raises the RECEIPT, and the receipt prints the method, the date and the
+ * reference — so they are asked for here. The button used to post a hardcoded
+ * "manual (NEFT)" note, which is why every operator-settled invoice printed
+ * "Payment Method: Manual entry" with a blank UTR.
+ */
+function MarkInvoicePaidForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
+  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local day
+  const [f, setF] = useState({ payment_method: 'neft', payment_ref: '', paid_on: today, note: '' });
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setF({ ...f, [k]: e.target.value });
+  const refRequired = REF_REQUIRED.includes(f.payment_method);
+
+  return (
+    <ActionForm
+      submitLabel={`Record ${formatPaise(invoice.totalPaise)} received`}
+      onDone={onDone}
+      onSubmit={async () => {
+        await api(`/admin/invoices/${invoice.id}/mark-paid`, {
+          method: 'POST',
+          body: {
+            payment_method: f.payment_method,
+            payment_ref: f.payment_ref.trim() || undefined,
+            paid_on: f.paid_on || undefined,
+            note: f.note.trim() || undefined,
+          },
+        });
+      }}
+    >
+      <p className="muted" style={{ marginTop: 0 }}>
+        This issues the receipt number for {invoice.invoiceNumber}. What you enter here is what the temple&apos;s
+        receipt will show, so it can be reconciled against a bank statement later.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label className="field"><span>Method</span>
+          <select value={f.payment_method} onChange={set('payment_method')} data-testid="mark-paid-method">
+            <option value="neft">NEFT / bank transfer</option>
+            <option value="rtgs">RTGS</option>
+            <option value="upi">UPI</option>
+            <option value="cheque">Cheque</option>
+            <option value="cash">Cash</option>
+            <option value="card">Card</option>
+            <option value="netbanking">Net banking</option>
+            <option value="razorpay">Razorpay (online)</option>
+            <option value="credit">Credit / adjustment</option>
+            <option value="manual">Manual entry (reference unknown)</option>
+          </select>
+        </label>
+        <label className="field"><span>Payment date</span>
+          <input type="date" value={f.paid_on} max={today} onChange={set('paid_on')} data-testid="mark-paid-date" />
+        </label>
+      </div>
+      <label className="field">
+        <span>{REF_LABEL[f.payment_method] ?? 'Reference'}{refRequired ? ' *' : ''}</span>
+        <input value={f.payment_ref} onChange={set('payment_ref')} required={refRequired} data-testid="mark-paid-ref"
+          placeholder={refRequired ? 'Printed on the receipt' : 'Optional'} />
+      </label>
+      <label className="field"><span>Internal note</span><input value={f.note} onChange={set('note')} /></label>
+    </ActionForm>
+  );
+}
+
 function RepriceInvoiceForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
   const [f, setF] = useState({
     subtotal: String(invoice.subtotalPaise / 100),
