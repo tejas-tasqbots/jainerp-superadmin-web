@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, formatDate, formatPaise, openReceipt } from '../api/client';
 import { PhoneInput } from '../components/PhoneInput';
@@ -9,7 +9,7 @@ import { AccountingBasisCard } from './AccountingBasisCard';
 
 const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
 const TIERS = ['pooled', 'dedicated'];
-type Tab = 'overview' | 'billing' | 'history' | 'users' | 'people' | 'licenses';
+type Tab = 'overview' | 'billing' | 'history' | 'users' | 'devices' | 'people' | 'licenses';
 
 const MANDIR_ROLES = ['temple_admin', 'cashier', 'accountant', 'priest', 'volunteer', 'viewer', 'bhojanshala_cashier'];
 interface MandirUser {
@@ -41,9 +41,9 @@ export function TenantDetailPage() {
       {notice && <div className="success-box" data-testid="notice">{notice}</div>}
 
       <div className="tabs">
-        {(['overview', 'billing', 'history', 'users', 'people', 'licenses'] as Tab[]).map((t) => (
+        {(['overview', 'billing', 'history', 'users', 'devices', 'people', 'licenses'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t === 'people' ? 'Trustees & Requirements' : t === 'users' ? 'Mandir Users' : t === 'history' ? 'Subscription & Receipts' : t[0].toUpperCase() + t.slice(1)}
+            {t === 'people' ? 'Trustees & Requirements' : t === 'users' ? 'Mandir Users' : t === 'devices' ? 'Devices & Sessions' : t === 'history' ? 'Subscription & Receipts' : t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
@@ -52,6 +52,7 @@ export function TenantDetailPage() {
       {tab === 'billing' && <BillingTab tenant={tenant} onChanged={(msg) => { setNotice(msg); load(); }} />}
       {tab === 'history' && <HistoryTab tenant={tenant} />}
       {tab === 'users' && <UsersTab tenant={tenant} onNotice={setNotice} />}
+      {tab === 'devices' && <SessionsTab tenant={tenant} onNotice={setNotice} />}
       {tab === 'people' && <PeopleTab tenant={tenant} onChanged={(msg) => { setNotice(msg); load(); }} />}
       {tab === 'licenses' && <LicensesTab tenant={tenant} onChanged={(msg) => { setNotice(msg); }} />}
     </div>
@@ -1068,6 +1069,146 @@ function MandirUserForm({ tenantId, user, onDone }: { tenantId: string; user?: M
         </div>
       </div>
     </ActionForm>
+  );
+}
+
+// ---------------- Devices & Sessions ----------------
+/**
+ * Every device signed in at this trust — support's answer to "someone is in my
+ * account" and to a phone that walked out with a volunteer. The temple admin
+ * has the same list inside the mandir portal (/my-devices); this one exists so
+ * support can act when the trust's own admin is the one locked out.
+ *
+ * Signing a device out is audited (tenant.session_revoked) — acting on a
+ * trust's account from the console is never invisible.
+ */
+interface TenantSession {
+  id: string; user_id: string; user_name: string | null; user_mobile: string; roles: string[] | null;
+  device_name: string | null; platform: string | null;
+  created_at: string; last_used_at: string | null; expires_at: string;
+  created_ip: string | null; last_ip: string | null; user_agent: string | null;
+}
+
+const PLATFORM_LABEL: Record<string, string> = {
+  web: 'Browser', android: 'Android app', ios: 'iPhone app', electron: 'Desktop app', desktop: 'Desktop app',
+};
+
+/** "Chrome on Windows" — what a browser session is called when it names itself nothing. */
+function describeUserAgent(ua: string | null): string | null {
+  if (!ua) return null;
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : null;
+  const os = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iOS/.test(ua) ? 'iOS'
+    : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : null;
+  if (browser && os) return `${browser} on ${os}`;
+  return browser ?? os;
+}
+
+function sessionWhen(iso: string | null): string {
+  if (!iso) return 'not used yet';
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 48 * 60) return `${Math.floor(mins / 60)} h ago`;
+  return `${Math.floor(mins / 1440)} days ago`;
+}
+
+function SessionsTab({ tenant, onNotice }: { tenant: TenantDetail; onNotice: (msg: string) => void }) {
+  const [sessions, setSessions] = useState<TenantSession[]>([]);
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api<TenantSession[]>(`/admin/tenants/${tenant.id}/sessions`).then((r) => setSessions(r.data)).catch(setError);
+  }, [tenant.id]);
+  useEffect(load, [load]);
+
+  async function run(fn: () => Promise<unknown>, msg: string) {
+    setError(null);
+    setBusy(true);
+    try { await fn(); load(); onNotice(msg); } catch (e) { setError(e); } finally { setBusy(false); }
+  }
+
+  // Grouped by person, because the question support is asked is about a person
+  // ("sign Ramesh out, he has left"), not about a token id.
+  const byUser = new Map<string, TenantSession[]>();
+  for (const s of sessions) {
+    const list = byUser.get(s.user_id);
+    if (list) list.push(s); else byUser.set(s.user_id, [s]);
+  }
+
+  return (
+    <div>
+      <ErrorBox error={error} />
+      <div className="card">
+        <div className="toolbar">
+          <h2 style={{ margin: 0 }}>Signed-in devices</h2>
+          <div className="grow" />
+          <button className="btn sm" onClick={load} disabled={busy}>Refresh</button>
+        </div>
+        <p className="muted">
+          Every live session at this mandir — web, mobile app and desktop app. A session stays live until it is signed
+          out or expires. Signing one out is immediate and is written to this trust's audit log.
+        </p>
+        <table className="data" data-testid="tenant-sessions">
+          <thead><tr><th>Person</th><th>Device</th><th>Where from</th><th>Last used</th><th>Signed in</th><th></th></tr></thead>
+          <tbody>
+            {[...byUser.values()].map((rows) => {
+              const u = rows[0];
+              return (
+                <Fragment key={u.user_id}>
+                  <tr className="group-row">
+                    <td colSpan={5}>
+                      <strong>{u.user_name ?? u.user_mobile}</strong>{' '}
+                      <span className="muted mono">{u.user_mobile}</span>{' '}
+                      <span className="muted">{(u.roles ?? []).join(', ') || 'no role at this mandir'} · {rows.length} device{rows.length === 1 ? '' : 's'}</span>
+                    </td>
+                    <td>
+                      {rows.length > 1 && (
+                        <button className="btn sm danger" disabled={busy} onClick={() => {
+                          if (confirm(`Sign ${u.user_name ?? u.user_mobile} out of all ${rows.length} devices? They will have to sign in again.`)) {
+                            run(async () => {
+                              for (const s of rows) {
+                                await api(`/admin/tenants/${tenant.id}/sessions/${s.id}`, { method: 'DELETE' });
+                              }
+                            }, `${u.user_name ?? u.user_mobile} was signed out everywhere`);
+                          }
+                        }}>Sign out everywhere</button>
+                      )}
+                    </td>
+                  </tr>
+                  {rows.map((s) => (
+                    <tr key={s.id} data-testid="session-row">
+                      <td />
+                      <td>
+                        {s.device_name ?? describeUserAgent(s.user_agent) ?? <span className="muted">Unknown device</span>}
+                        <div className="muted">{PLATFORM_LABEL[s.platform ?? ''] ?? s.platform ?? '—'}</div>
+                      </td>
+                      <td className="mono">
+                        {s.last_ip ?? s.created_ip ?? <span className="muted">—</span>}
+                        {s.created_ip && s.last_ip && s.created_ip !== s.last_ip && (
+                          <div className="muted">signed in from {s.created_ip}</div>
+                        )}
+                      </td>
+                      <td>{sessionWhen(s.last_used_at ?? s.created_at)}</td>
+                      <td>{formatDate(s.created_at)}</td>
+                      <td>
+                        <button className="btn sm danger" disabled={busy} onClick={() => {
+                          if (confirm(`Sign "${s.device_name ?? 'this device'}" out? ${u.user_name ?? u.user_mobile} will have to sign in again on it.`)) {
+                            run(() => api(`/admin/tenants/${tenant.id}/sessions/${s.id}`, { method: 'DELETE' }), 'Device signed out');
+                          }
+                        }}>Sign out</button>
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
+              );
+            })}
+            {sessions.length === 0 && <tr><td colSpan={6} className="muted">Nobody is signed in at this mandir right now.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
