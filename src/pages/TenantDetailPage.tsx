@@ -1,8 +1,8 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { api, formatDate, formatPaise, openReceipt } from '../api/client';
 import { PhoneInput } from '../components/PhoneInput';
-import type { BillingHistory, Invoice, License, LifecycleEvent, TenantDetail } from '../api/types';
+import type { BillingHistory, Invoice, InvoicePayment, License, LifecycleEvent, TenantDetail } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal } from '../components/ui';
 import { ModulePicker } from '../components/ModulePicker';
 import { AccountingBasisCard } from './AccountingBasisCard';
@@ -61,9 +61,8 @@ export function TenantDetailPage() {
 
 // ---------------- Overview ----------------
 function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (msg: string) => void }) {
-  const navigate = useNavigate();
   const [modal, setModal] = useState<
-    'plan' | 'tier' | 'suspend' | 'cancel' | 'deactivate' | 'custom-plan' | 'modules' | null
+    'plan' | 'tier' | 'suspend' | 'deactivate' | 'custom-plan' | 'modules' | null
   >(null);
   const [error, setError] = useState<unknown>(null);
 
@@ -229,12 +228,11 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
           >
             {tenant.global_sync_enabled ? 'Disable' : 'Enable'} global sync
           </button>
-          <div className="grow" />
-          {!tenant.is_deleted && (
-            <button className="btn danger" data-testid="delete-tenant" onClick={() => setModal('cancel')}>
-              Delete mandir…
-            </button>
-          )}
+          {/* No "Delete mandir" here, on purpose (removed 2026-09-29). A trust
+              that stops paying is Suspended; one that must not sign in is
+              Deactivated — both reversible and both keep its books, invoices
+              and receipts reachable. Restore (above) remains for trusts that
+              were deleted before this. */}
         </div>
       </div>
 
@@ -266,11 +264,6 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
       {modal === 'tier' && (
         <Modal title="Change tenancy tier (managed migration)" onClose={() => setModal(null)}>
           <TierForm tenantId={tenant.id} current={tenant.tenancy_tier} onDone={() => { setModal(null); onChanged('Tier migration scheduled'); }} />
-        </Modal>
-      )}
-      {modal === 'cancel' && (
-        <Modal title="Delete mandir (soft delete — reversible)" onClose={() => setModal(null)}>
-          <CancelForm tenant={tenant} onDone={() => { setModal(null); navigate('/mandirs'); }} />
         </Modal>
       )}
     </div>
@@ -461,42 +454,30 @@ function TierForm({ tenantId, current, onDone }: { tenantId: string; current: st
   );
 }
 
-/**
- * Soft delete: nothing is destroyed. The mandir's schema, donations and receipts
- * are all retained — it simply drops out of every listing, all staff logins are
- * blocked, and devotees stop seeing it. Reversible from the Restore button.
- */
-function CancelForm({ tenant, onDone }: { tenant: TenantDetail; onDone: () => void }) {
-  const [confirm, setConfirm] = useState('');
-  const [reason, setReason] = useState('');
-  return (
-    <ActionForm submitLabel="Delete mandir" onDone={onDone}
-      onSubmit={async () => {
-        await api(`/admin/tenants/${tenant.id}`, {
-          method: 'DELETE',
-          body: { confirm_slug: confirm, reason: reason || undefined },
-        });
-      }}>
-      <p>
-        This is a <b>soft delete</b> — all data is kept and it can be restored later.
-        Staff will not be able to sign in and devotees will no longer see this mandir.
-      </p>
-      <p>Type the slug <code className="mono">{tenant.slug}</code> to confirm.</p>
-      <label className="field"><span>Slug</span><input name="confirm_slug" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></label>
-      <label className="field"><span>Reason (optional)</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-    </ActionForm>
-  );
-}
-
 // ---------------- Billing ----------------
+const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  neft: 'NEFT / bank transfer',
+  rtgs: 'RTGS',
+  upi: 'UPI',
+  cheque: 'Cheque',
+  cash: 'Cash',
+  card: 'Card',
+  netbanking: 'Net banking',
+  razorpay: 'Razorpay (online)',
+  credit: 'Credit / adjustment',
+  manual: 'Manual entry',
+};
+const OPEN_STATUSES = ['unpaid', 'partially_paid'];
+
 function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (msg: string) => void }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [linkUrl, setLinkUrl] = useState<string | null>(null);
   const [mandateLink, setMandateLink] = useState<string | null>(null);
-  /** Invoice being re-priced — only ever an unpaid one. */
+  /** Invoice being re-priced — only ever one with money still owing. */
   const [repricing, setRepricing] = useState<Invoice | null>(null);
-  const [markingPaid, setMarkingPaid] = useState<Invoice | null>(null);
+  const [recording, setRecording] = useState<Invoice | null>(null);
+  const [cancelling, setCancelling] = useState<{ invoice: Invoice; payment: InvoicePayment } | null>(null);
 
   const load = useCallback(() => {
     api<Invoice[]>(`/admin/tenants/${tenant.id}/invoices`).then((r) => setInvoices(r.data)).catch(setError);
@@ -507,6 +488,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
     setError(null);
     try { await fn(); } catch (e) { setError(e); }
   }
+  const open = (path: string) => run(() => openReceipt(path));
 
   return (
     <div>
@@ -556,6 +538,10 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
 
       <div className="card">
         <h2>Invoices</h2>
+        <p className="muted" style={{ marginTop: -8 }}>
+          An invoice can be paid in parts. Each payment gets its own receipt; the invoice lists them all
+          with the balance still due, so once settled it is the single document covering every payment.
+        </p>
         {linkUrl && (
           <div className="success-box" data-testid="payment-link">
             Payment link: <a href={linkUrl} target="_blank" rel="noreferrer">{linkUrl}</a>
@@ -564,60 +550,126 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
         <table className="data">
           <thead>
             <tr>
-              <th>Invoice #</th><th>Period</th><th>Subtotal</th><th>Discount</th><th>GST</th><th>Total</th><th>Status</th><th></th>
+              <th>Invoice #</th><th>Period</th><th>Total</th><th>Received</th><th>Balance</th><th>Status</th><th></th>
             </tr>
           </thead>
           <tbody>
-            {invoices.map((inv) => (
-              <tr key={inv.id}>
-                <td className="mono">{inv.invoiceNumber}</td>
-                <td>{formatDate(inv.periodStart)} → {formatDate(inv.periodEnd)}</td>
-                <td>{formatPaise(inv.subtotalPaise)}</td>
-                <td>{inv.discountPaise ? `− ${formatPaise(inv.discountPaise)}` : <span className="muted">—</span>}</td>
-                <td>{formatPaise(inv.gstAmountPaise)}</td>
-                <td>{formatPaise(inv.totalPaise)}</td>
-                <td>
-                  <Badge value={inv.status} />
-                  {inv.receiptNumber && (
-                    <div className="muted mono" style={{ fontSize: 11 }}>{inv.receiptNumber}</div>
+            {invoices.map((inv) => {
+              const live = (inv.payments ?? []).filter((p) => !p.voided_at);
+              const isOpen = OPEN_STATUSES.includes(inv.status);
+              return (
+                <Fragment key={inv.id}>
+                  <tr>
+                    <td className="mono">{inv.invoiceNumber}</td>
+                    <td>{formatDate(inv.periodStart)} → {formatDate(inv.periodEnd)}</td>
+                    <td>
+                      {formatPaise(inv.totalPaise)}
+                      <div className="muted small">
+                        {formatPaise(inv.totalPaise - inv.gstAmountPaise)} + GST {formatPaise(inv.gstAmountPaise)}
+                        {inv.discountPaise ? ` · − ${formatPaise(inv.discountPaise)} discount` : ''}
+                      </div>
+                    </td>
+                    <td data-testid={`received-${inv.invoiceNumber}`}>{inv.amountPaidPaise ? formatPaise(inv.amountPaidPaise) : <span className="muted">—</span>}</td>
+                    <td data-testid={`balance-${inv.invoiceNumber}`}>
+                      {inv.status === 'void' ? <span className="muted">—</span> : inv.balancePaise > 0 ? <b>{formatPaise(inv.balancePaise)}</b> : <span className="muted">nil</span>}
+                    </td>
+                    <td><Badge value={inv.status} /></td>
+                    <td>
+                      <div className="toolbar" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {isOpen && (
+                          <button className="btn sm primary" data-testid={`record-payment-${inv.invoiceNumber}`} onClick={() => setRecording(inv)}>
+                            {inv.amountPaidPaise ? 'Record next payment' : 'Record payment'}
+                          </button>
+                        )}
+                        {isOpen && (
+                          <button className="btn sm" onClick={() => run(async () => {
+                            const { data } = await api<{ short_url: string }>(`/admin/tenants/${tenant.id}/payment-link`, {
+                              method: 'POST',
+                              body: { invoice_id: inv.id, channel: ['sms', 'whatsapp'] },
+                            });
+                            setLinkUrl(data.short_url);
+                          })}>
+                            {inv.amountPaidPaise ? 'Link for balance' : 'Payment link'}
+                          </button>
+                        )}
+                        {/* Change the amount agreed with this mandir while money
+                            is still owing. Refused once fully paid — a paid tax
+                            invoice is corrected by void + reissue, not an UPDATE. */}
+                        {isOpen && (
+                          <button className="btn sm" data-testid={`reprice-${inv.invoiceNumber}`} onClick={() => setRepricing(inv)}>
+                            Re-price
+                          </button>
+                        )}
+                        {inv.status !== 'void' && (
+                          <button className="btn sm" data-testid={`invoice-doc-${inv.invoiceNumber}`}
+                            title="The tax invoice, with every payment received and the balance due"
+                            onClick={() => open(`/admin/invoices/${inv.id}/receipt?channel=download`)}>
+                            Invoice
+                          </button>
+                        )}
+                        {live.length > 1 && (
+                          <button className="btn sm" data-testid={`all-receipts-${inv.invoiceNumber}`}
+                            title="One receipt listing every payment received on this invoice"
+                            onClick={() => open(`/admin/invoices/${inv.id}/payment-receipt?channel=download`)}>
+                            Combined receipt
+                          </button>
+                        )}
+                        {inv.status === 'unpaid' && !live.length && (
+                          <button className="btn sm danger" onClick={() => run(async () => {
+                            if (!window.confirm(`Void ${inv.invoiceNumber}? It stays on record as void and can no longer be paid.`)) return;
+                            await api(`/admin/invoices/${inv.id}/void`, { method: 'POST', body: { reason: 'voided from console' } });
+                            load();
+                            onChanged('Invoice voided');
+                          })}>
+                            Void
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {(inv.payments ?? []).length > 0 && (
+                    <tr className="subrow">
+                      <td colSpan={7} style={{ paddingTop: 0 }}>
+                        <table className="data nested" data-testid={`payments-${inv.invoiceNumber}`}>
+                          <thead>
+                            <tr><th>Receipt #</th><th>Received on</th><th>Method</th><th>Reference</th><th>Amount</th><th>Recorded</th><th></th></tr>
+                          </thead>
+                          <tbody>
+                            {inv.payments.map((p) => (
+                              <tr key={p.id} className={p.voided_at ? 'cancelled' : ''}>
+                                <td className="mono">{p.receipt_number ?? '—'}</td>
+                                <td>{formatDate(p.paid_at)}</td>
+                                <td>{PAYMENT_METHOD_LABEL[p.payment_method] ?? p.payment_method}</td>
+                                <td className="mono">{p.payment_ref ?? p.razorpay_payment_id ?? '—'}</td>
+                                <td>{formatPaise(p.amount_paise)}</td>
+                                <td className="muted small">
+                                  {p.voided_at
+                                    ? `cancelled ${formatDate(p.voided_at)}${p.void_reason ? ` — ${p.void_reason}` : ''}`
+                                    : p.source === 'console' ? (p.recorded_by_name ?? 'console') : p.source}
+                                </td>
+                                <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                                  <button className="btn sm" data-testid={`receipt-${p.receipt_number}`}
+                                    onClick={() => open(`/admin/invoices/${inv.id}/payment-receipt?payment_id=${p.id}&channel=download`)}>
+                                    Receipt
+                                  </button>{' '}
+                                  {!p.voided_at && (
+                                    <button className="btn sm danger" data-testid={`cancel-payment-${p.receipt_number}`}
+                                      onClick={() => setCancelling({ invoice: inv, payment: p })}>
+                                      Cancel
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
                   )}
-                </td>
-                <td>
-                  {inv.status === 'unpaid' && (
-                    <>
-                      {/* Change the amount agreed with this mandir while it is
-                          still unpaid. Refused once paid — a paid tax invoice is
-                          corrected by void + reissue, not by an UPDATE. */}
-                      <button className="btn sm" data-testid={`reprice-${inv.invoiceNumber}`} onClick={() => setRepricing(inv)}>
-                        Re-price
-                      </button>{' '}
-                      <button className="btn sm" onClick={() => run(async () => {
-                        const { data } = await api<{ short_url: string }>(`/admin/tenants/${tenant.id}/payment-link`, {
-                          method: 'POST',
-                          body: { invoice_id: inv.id, channel: ['sms', 'whatsapp'] },
-                        });
-                        setLinkUrl(data.short_url);
-                      })}>
-                        Payment link
-                      </button>{' '}
-                      {/* Asks HOW it was paid: the method, the reference and
-                          the date all print on the receipt this raises. */}
-                      <button className="btn sm" data-testid={`mark-paid-${inv.invoiceNumber}`} onClick={() => setMarkingPaid(inv)}>
-                        Mark paid
-                      </button>{' '}
-                      <button className="btn sm danger" onClick={() => run(async () => {
-                        await api(`/admin/invoices/${inv.id}/void`, { method: 'POST', body: { reason: 'voided from console' } });
-                        load();
-                        onChanged('Invoice voided');
-                      })}>
-                        Void
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {invoices.length === 0 && <tr><td colSpan={8} className="muted">No invoices.</td></tr>}
+                </Fragment>
+              );
+            })}
+            {invoices.length === 0 && <tr><td colSpan={7} className="muted">No invoices.</td></tr>}
           </tbody>
         </table>
         {/* A link already created for an invoice is kept on the row, so support
@@ -635,11 +687,20 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
         )}
       </div>
 
-      {markingPaid && (
-        <Modal title={`Record payment — ${markingPaid.invoiceNumber}`} onClose={() => setMarkingPaid(null)}>
-          <MarkInvoicePaidForm
-            invoice={markingPaid}
-            onDone={() => { setMarkingPaid(null); load(); onChanged('Invoice marked paid'); }}
+      {recording && (
+        <Modal title={`Record payment — ${recording.invoiceNumber}`} onClose={() => setRecording(null)}>
+          <RecordPaymentForm
+            invoice={recording}
+            onDone={(msg) => { setRecording(null); setLinkUrl(null); load(); onChanged(msg); }}
+          />
+        </Modal>
+      )}
+      {cancelling && (
+        <Modal title={`Cancel receipt ${cancelling.payment.receipt_number ?? ''}`} onClose={() => setCancelling(null)}>
+          <CancelPaymentForm
+            invoice={cancelling.invoice}
+            payment={cancelling.payment}
+            onDone={(msg) => { setCancelling(null); load(); onChanged(msg); }}
           />
         </Modal>
       )}
@@ -655,11 +716,6 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
   );
 }
 
-/**
- * Re-price an unpaid invoice: the "we agreed a different amount with this
- * mandir and they have not paid yet" case. Amounts are entered in rupees and
- * converted here — the API only accepts paise.
- */
 /** Methods that always leave a reference — mirrors REFERENCE_REQUIRED in the API. */
 const REF_REQUIRED = ['razorpay', 'upi', 'card', 'netbanking', 'neft', 'rtgs', 'cheque'];
 const REF_LABEL: Record<string, string> = {
@@ -675,57 +731,92 @@ const REF_LABEL: Record<string, string> = {
   manual: 'Reference (optional)',
 };
 
+/** "25000", "25,000.50", "₹ 5000" → paise; null when it is not a positive amount. */
+function rupeesToPaise(v: string): number | null {
+  const n = Number(v.replace(/[₹,\s]/g, ''));
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+}
+
 /**
- * Record an off-gateway payment against an invoice.
+ * Record ONE payment against an invoice — the whole balance, or part of it.
  *
- * This raises the RECEIPT, and the receipt prints the method, the date and the
- * reference — so they are asked for here. The button used to post a hardcoded
- * "manual (NEFT)" note, which is why every operator-settled invoice printed
- * "Payment Method: Manual entry" with a blank UTR.
+ * Each payment raises its own receipt, and the receipt prints the method, the
+ * date and the reference — so they are asked for here, per payment. A ₹25,000
+ * invoice paid as ₹20,000 then ₹5,000 is two visits to this form, and two
+ * receipts that each quote their own UTR. Split tender (part UPI, part cash on
+ * the same day) is the same: one entry per method.
  */
-function MarkInvoicePaidForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
+function RecordPaymentForm({ invoice, onDone }: { invoice: Invoice; onDone: (msg: string) => void }) {
   const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local day
-  const [f, setF] = useState({ payment_method: 'neft', payment_ref: '', paid_on: today, note: '' });
+  const balance = invoice.balancePaise;
+  const [f, setF] = useState({
+    amount: String(balance / 100),
+    payment_method: 'upi',
+    payment_ref: '',
+    paid_on: today,
+    note: '',
+  });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: e.target.value });
   const refRequired = REF_REQUIRED.includes(f.payment_method);
+  const amountPaise = rupeesToPaise(f.amount);
+  const over = amountPaise != null && amountPaise > balance;
+  const after = amountPaise != null && !over ? balance - amountPaise : null;
+  const result = useRef<{ receipt_number: string; balance_paise: number } | null>(null);
 
   return (
     <ActionForm
-      submitLabel={`Record ${formatPaise(invoice.totalPaise)} received`}
-      onDone={onDone}
+      submitLabel={amountPaise && !over ? `Record ${formatPaise(amountPaise)} received` : 'Record payment'}
+      successMessage={null}
+      onDone={() => {
+        const r = result.current;
+        onDone(r
+          ? `Payment recorded — receipt ${r.receipt_number}. ${r.balance_paise > 0 ? `${formatPaise(r.balance_paise)} still due on ${invoice.invoiceNumber}.` : `${invoice.invoiceNumber} is now fully paid.`}`
+          : 'Payment recorded');
+      }}
       onSubmit={async () => {
-        await api(`/admin/invoices/${invoice.id}/mark-paid`, {
+        if (amountPaise == null) throw new Error('Enter the amount received.');
+        if (over) throw new Error(`Only ${formatPaise(balance)} is due on this invoice.`);
+        const { data } = await api<{ receipt_number: string; balance_paise: number }>(`/admin/invoices/${invoice.id}/payments`, {
           method: 'POST',
           body: {
+            amount_paise: amountPaise,
             payment_method: f.payment_method,
             payment_ref: f.payment_ref.trim() || undefined,
             paid_on: f.paid_on || undefined,
             note: f.note.trim() || undefined,
           },
         });
+        result.current = data;
       }}
     >
-      <p className="muted" style={{ marginTop: 0 }}>
-        This issues the receipt number for {invoice.invoiceNumber}. What you enter here is what the temple&apos;s
-        receipt will show, so it can be reconciled against a bank statement later.
-      </p>
+      <dl className="kv" style={{ marginBottom: 14 }} data-testid="payment-summary">
+        <dt>Invoice total</dt><dd>{formatPaise(invoice.totalPaise)}</dd>
+        {invoice.amountPaidPaise > 0 && (<><dt>Received so far</dt><dd>{formatPaise(invoice.amountPaidPaise)} ({invoice.payments.filter((p) => !p.voided_at).length} payment{invoice.payments.filter((p) => !p.voided_at).length === 1 ? '' : 's'})</dd></>)}
+        <dt>Balance due</dt><dd><b>{formatPaise(balance)}</b></dd>
+      </dl>
+      <label className="field">
+        <span>Amount received (₹) *</span>
+        <input value={f.amount} onChange={set('amount')} inputMode="decimal" required data-testid="payment-amount" />
+        <span className="muted small" style={{ display: 'block', marginTop: 4 }} data-testid="payment-after">
+          {over
+            ? <span style={{ color: 'var(--color-danger-dark, #9f2f22)' }}>More than the {formatPaise(balance)} due — record at most that.</span>
+            : after == null
+              ? 'Enter the amount that actually arrived.'
+              : after === 0
+                ? 'Settles the invoice in full.'
+                : `Part payment — ${formatPaise(after)} will still be due. Record the rest when it arrives; it gets its own receipt.`}
+        </span>
+      </label>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <label className="field"><span>Method</span>
           <select value={f.payment_method} onChange={set('payment_method')} data-testid="mark-paid-method">
-            <option value="neft">NEFT / bank transfer</option>
-            <option value="rtgs">RTGS</option>
-            <option value="upi">UPI</option>
-            <option value="cheque">Cheque</option>
-            <option value="cash">Cash</option>
-            <option value="card">Card</option>
-            <option value="netbanking">Net banking</option>
-            <option value="razorpay">Razorpay (online)</option>
-            <option value="credit">Credit / adjustment</option>
-            <option value="manual">Manual entry (reference unknown)</option>
+            {Object.entries(PAYMENT_METHOD_LABEL).map(([k, label]) => (
+              <option key={k} value={k}>{k === 'manual' ? 'Manual entry (reference unknown)' : label}</option>
+            ))}
           </select>
         </label>
-        <label className="field"><span>Payment date</span>
+        <label className="field"><span>Date received</span>
           <input type="date" value={f.paid_on} max={today} onChange={set('paid_on')} data-testid="mark-paid-date" />
         </label>
       </div>
@@ -739,6 +830,45 @@ function MarkInvoicePaidForm({ invoice, onDone }: { invoice: Invoice; onDone: ()
   );
 }
 
+/**
+ * Cancel a payment recorded by mistake. The receipt number stays issued — it
+ * may already be with the customer — and re-prints CANCELLED; the invoice
+ * goes back to owing that amount.
+ */
+function CancelPaymentForm({ invoice, payment, onDone }: { invoice: Invoice; payment: InvoicePayment; onDone: (msg: string) => void }) {
+  const [reason, setReason] = useState('');
+  return (
+    <ActionForm
+      submitLabel="Cancel this payment"
+      successMessage={null}
+      onDone={() => onDone(`Receipt ${payment.receipt_number ?? ''} cancelled — ${formatPaise(payment.amount_paise)} is due again on ${invoice.invoiceNumber}.`)}
+      onSubmit={async () => {
+        await api(`/admin/invoices/${invoice.id}/payments/${payment.id}/void`, { method: 'POST', body: { reason } });
+      }}
+    >
+      <p style={{ marginTop: 0 }}>
+        {formatPaise(payment.amount_paise)} received on {formatDate(payment.paid_at)} by{' '}
+        {PAYMENT_METHOD_LABEL[payment.payment_method] ?? payment.payment_method}
+        {payment.payment_ref ? ` (${payment.payment_ref})` : ''}.
+      </p>
+      <p className="muted">
+        Use this for a wrong amount, a wrong invoice or a bounced cheque. The receipt number is not reused — its
+        re-print will say CANCELLED — and the amount becomes due again.
+      </p>
+      <label className="field"><span>Reason *</span>
+        <input value={reason} onChange={(e) => setReason(e.target.value)} required maxLength={300}
+          placeholder="Cheque bounced / entered twice / wrong amount" data-testid="cancel-payment-reason" />
+      </label>
+    </ActionForm>
+  );
+}
+
+/**
+ * Re-price an invoice while money is still owing on it: the "we agreed a
+ * different amount with this mandir" case, before it pays or on the balance
+ * after an instalment. Amounts are entered in rupees and converted here — the
+ * API only accepts paise.
+ */
 function RepriceInvoiceForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
   const [f, setF] = useState({
     subtotal: String(invoice.subtotalPaise / 100),
@@ -770,6 +900,7 @@ function RepriceInvoiceForm({ invoice, onDone }: { invoice: Invoice; onDone: () 
       <p className="muted" style={{ marginTop: 0 }}>
         GST is recalculated on the net (subtotal − discount + charges). Any payment link already sent quotes the
         old figure, so it is cleared — create a new one afterwards.
+        {invoice.amountPaidPaise > 0 && ` ${formatPaise(invoice.amountPaidPaise)} has already been received, so the new total cannot be lower than that.`}
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <label className="field"><span>Subtotal (₹)</span><input type="number" value={f.subtotal} onChange={set('subtotal')} /></label>
@@ -815,8 +946,12 @@ function HistoryTab({ tenant }: { tenant: TenantDetail }) {
             {eff ? eff.display_name : '—'}
             {eff?.is_custom && <span className="badge" style={{ marginLeft: 6 }}>custom</span>}
           </dd>
-          <dt>Lifetime paid</dt><dd data-testid="lifetime-paid">{formatPaise(h.totals.paid_paise)} ({h.totals.paid_count} invoice{h.totals.paid_count === 1 ? '' : 's'})</dd>
-          <dt>Outstanding</dt><dd>{formatPaise(h.totals.outstanding_paise)} ({h.totals.unpaid_count} unpaid)</dd>
+          <dt>Lifetime received</dt><dd data-testid="lifetime-paid">{formatPaise(h.totals.paid_paise)} ({h.totals.paid_count} invoice{h.totals.paid_count === 1 ? '' : 's'} fully paid)</dd>
+          <dt>Outstanding</dt>
+          <dd>
+            {formatPaise(h.totals.outstanding_paise)} ({h.totals.unpaid_count} open
+            {h.totals.partially_paid_count ? `, ${h.totals.partially_paid_count} part-paid` : ''})
+          </dd>
           <dt>Written off (void)</dt><dd>{formatPaise(h.totals.voided_paise)}</dd>
           <dt>Last payment</dt><dd>{h.totals.last_paid_at ? formatDate(h.totals.last_paid_at) : '—'}</dd>
         </dl>
@@ -867,7 +1002,7 @@ function HistoryTab({ tenant }: { tenant: TenantDetail }) {
         <h2>Purchase history &amp; receipts</h2>
         <table className="data" data-testid="purchase-table">
           <thead>
-            <tr><th>Invoice #</th><th>Plan</th><th>Period</th><th>Total</th><th>Status</th><th>Paid via</th><th>Reference</th><th>Receipt</th></tr>
+            <tr><th>Invoice #</th><th>Plan</th><th>Period</th><th>Total</th><th>Received</th><th>Status</th><th>Paid via</th><th>Receipts</th></tr>
           </thead>
           <tbody>
             {h.invoices.map((inv) => (
@@ -876,9 +1011,26 @@ function HistoryTab({ tenant }: { tenant: TenantDetail }) {
                 <td>{inv.plan_name ?? '—'}{inv.billing_cycle ? ` · ${inv.billing_cycle}` : ''}</td>
                 <td>{formatDate(inv.period_start)} → {formatDate(inv.period_end)}</td>
                 <td>{formatPaise(inv.total_paise)}</td>
+                <td>
+                  {inv.amount_paid_paise ? formatPaise(inv.amount_paid_paise) : '—'}
+                  {Number(inv.balance_paise) > 0 && inv.status !== 'void' && Number(inv.amount_paid_paise) > 0 && (
+                    <div className="muted small">{formatPaise(Number(inv.balance_paise))} due</div>
+                  )}
+                </td>
                 <td><Badge value={inv.status} /></td>
-                <td>{inv.payment_method ? inv.payment_method.replace(/_/g, ' ') : '—'}</td>
-                <td className="mono">{inv.payment_ref ?? inv.razorpay_payment_id ?? '—'}</td>
+                <td>
+                  {(() => {
+                    const live = (inv.payments ?? []).filter((p) => !p.voided_at);
+                    if (live.length > 1) return `${live.length} payments`;
+                    if (!inv.payment_method) return '—';
+                    return (
+                      <>
+                        {inv.payment_method.replace(/_/g, ' ')}
+                        <div className="muted small mono">{inv.payment_ref ?? inv.razorpay_payment_id ?? ''}</div>
+                      </>
+                    );
+                  })()}
+                </td>
                 <td>
                   <button
                     className="btn sm"
@@ -891,8 +1043,25 @@ function HistoryTab({ tenant }: { tenant: TenantDetail }) {
                       } catch (e) { setError(e); }
                     }}
                   >
-                    Open receipt
+                    Invoice
                   </button>
+                  {(inv.payments ?? []).filter((p) => !p.voided_at).map((p) => (
+                    <button
+                      key={p.id}
+                      className="btn sm"
+                      style={{ marginLeft: 4 }}
+                      title={`${formatPaise(p.amount_paise)} on ${formatDate(p.paid_at)}`}
+                      onClick={async () => {
+                        setError(null);
+                        try {
+                          await openReceipt(`/admin/invoices/${inv.id}/payment-receipt?payment_id=${p.id}&channel=download`);
+                          load();
+                        } catch (e) { setError(e); }
+                      }}
+                    >
+                      {p.receipt_number ?? 'Receipt'}
+                    </button>
+                  ))}
                   <div className="muted" style={{ fontSize: 11 }}>
                     {inv.download_count > 0
                       ? `${inv.download_count} download${inv.download_count === 1 ? '' : 's'} · last ${formatDate(inv.last_downloaded_at)}`

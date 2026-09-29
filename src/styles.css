@@ -193,7 +193,7 @@
   .badge.suspended, .badge.unpaid, .badge.revoked, .badge.rejected {
     background: var(--color-brand-red-light); color: var(--color-brand-red-dark);
   }
-  .badge.provisioning, .badge.created, .badge.open, .badge.in_progress {
+  .badge.provisioning, .badge.created, .badge.open, .badge.in_progress, .badge.partially_paid {
     background: var(--color-brand-gold-light); color: var(--color-brand-gold-dark);
   }
   .badge.cancelled, .badge.void, .badge.unverified { @apply bg-slate-100 text-slate-600; }
@@ -223,8 +223,44 @@
     @apply bg-white rounded-xl shadow-2xl;
     padding: 24px 26px; width: 480px; max-width: 100%; max-height: 82vh; overflow-y: auto;
   }
-  .modal h2 { margin-bottom: 16px; }
-  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .modal.modal-wide { width: 940px; }
+  /* Payments listed under their invoice (migration 088). */
+  table.data tr.subrow > td { background: #f8fafc; }
+  table.data.nested { margin: 0; font-size: 12.5px; }
+  table.data.nested thead th { background: transparent; color: #64748b; font-size: 11px; padding: 6px 10px; }
+  table.data.nested td { padding: 6px 10px; }
+  table.data.nested tr.cancelled td { color: #94a3b8; text-decoration: line-through; }
+  table.data.nested tr.cancelled td:last-child { text-decoration: none; }
+  /* Title and submit stay in view however long the form is: an onboarding
+     form scrolled past its last field used to hide the Create button, and its
+     top hid which dialog you were in. Negative margins cancel the dialog's
+     padding so the pinned bars run edge to edge. */
+  .modal-head {
+    position: sticky; top: -24px; z-index: 2; background: #fff;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    margin: -24px -26px 16px; padding: 20px 26px 12px;
+    border-bottom: 1px solid var(--color-border, #e2e8f0);
+  }
+  .modal-head h2 { margin: 0; }
+  .modal-x {
+    @apply bg-transparent border-none cursor-pointer text-slate-400 hover:text-slate-700 rounded-md;
+    font-size: 26px; line-height: 1; padding: 0 6px;
+  }
+  .modal .actions {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px;
+    position: sticky; bottom: -24px; z-index: 2; background: #fff;
+    margin-left: -26px; margin-right: -26px; margin-bottom: -24px; padding: 12px 26px 20px;
+    border-top: 1px solid var(--color-border, #e2e8f0);
+  }
+  /* Two fields to a row in a wide dialog; one on a narrow screen. */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
+  .form-grid > .span-2 { grid-column: 1 / -1; }
+  @media (max-width: 720px) { .form-grid { grid-template-columns: 1fr; } }
+  .draft-note {
+    @apply rounded-md text-sm flex items-center justify-between gap-3;
+    background: var(--color-brand-blue-light, #e8f0fe); color: var(--color-brand-blue-dark, #1a3d7c);
+    padding: 8px 12px; margin-bottom: 12px;
+  }
 
   /* ── Alerts ─────────────────────────────────────────────────────────────── */
   .error-box {

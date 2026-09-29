@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiRequestError } from '../api/client';
 
 export function Badge({ value }: { value: string | boolean }) {
@@ -6,19 +6,60 @@ export function Badge({ value }: { value: string | boolean }) {
   return <span className={`badge ${v}`}>{typeof value === 'boolean' ? (value ? 'verified' : 'not verified') : v.replace(/_/g, ' ')}</span>;
 }
 
+/**
+ * A dialog that closes only when asked to.
+ *
+ * It used to close on any click outside it, and every dialog in this console
+ * is a form — so a stray click beside a half-filled onboarding form threw the
+ * whole thing away (reported 2026-09-29). Standard for form dialogs (Material's
+ * "persistent" dialog, Stripe, Zoho): the backdrop does nothing; the × button
+ * and Esc close, and Esc asks first once anything has been typed.
+ *
+ * `confirmDiscard={false}` for a form that keeps its own draft, where closing
+ * loses nothing.
+ */
 export function Modal({
   title,
   onClose,
   children,
+  wide = false,
+  confirmDiscard = true,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  wide?: boolean;
+  confirmDiscard?: boolean;
 }) {
+  const dirty = useRef(false);
+  const requestClose = useCallback(() => {
+    if (confirmDiscard && dirty.current && !window.confirm('Close this form? What you have entered will be lost.')) return;
+    onClose();
+  }, [confirmDiscard, onClose]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') requestClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [requestClose]);
+
   return (
-    <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label={title}>
-        <h2>{title}</h2>
+    <div className="modal-overlay">
+      <div
+        className={`modal${wide ? ' modal-wide' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        // Any typing, ticking or picking inside marks the form as worth
+        // protecting — input events bubble from every field type.
+        onInput={() => { dirty.current = true; }}
+      >
+        <div className="modal-head">
+          <h2>{title}</h2>
+          <button type="button" className="modal-x" aria-label="Close" title="Close (Esc)" onClick={requestClose}>
+            ×
+          </button>
+        </div>
         {children}
       </div>
     </div>
@@ -72,12 +113,15 @@ export function ActionForm({
   children,
   onDone,
   successMessage = 'Saved.',
+  secondary,
 }: {
   onSubmit: () => Promise<void>;
   submitLabel: string;
   children: ReactNode;
   onDone?: () => void;
   successMessage?: string | null;
+  /** Extra buttons beside the submit (a Cancel, a Start over). */
+  secondary?: ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -115,6 +159,7 @@ export function ActionForm({
       <SuccessBox message={ok} />
       {children}
       <div className="actions">
+        {secondary}
         <button className="btn primary" type="submit" disabled={busy}>
           {busy ? 'Working…' : submitLabel}
         </button>

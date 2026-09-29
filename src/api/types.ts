@@ -202,6 +202,31 @@ export interface Invoice {
   /** The exact Payment Link last sent for this invoice, so it can be resent. */
   paymentLinkUrl: string | null;
   paymentLinkExpiresAt: string | null;
+  // ---- migration 088: part payments ----
+  /** Sum of live payments; the balance due is totalPaise - amountPaidPaise. */
+  amountPaidPaise: number;
+  balancePaise: number;
+  payments: InvoicePayment[];
+}
+
+/** One payment received against an invoice, with its own receipt number (migration 088). */
+export interface InvoicePayment {
+  id: string;
+  invoice_id: string;
+  receipt_number: string | null;
+  amount_paise: number;
+  payment_method: string;
+  payment_ref: string | null;
+  paid_at: string;
+  note: string | null;
+  /** console | gateway | registration | backfill */
+  source: string;
+  razorpay_payment_id: string | null;
+  created_at: string;
+  /** Set when the payment was cancelled; it no longer counts towards the invoice. */
+  voided_at: string | null;
+  void_reason: string | null;
+  recorded_by_name: string | null;
 }
 
 export interface License {
@@ -420,6 +445,10 @@ export interface HistoryInvoice {
   created_at: string;
   download_count: number;
   last_downloaded_at: string | null;
+  receipt_number: string | null;
+  amount_paid_paise: number;
+  balance_paise: number;
+  payments: InvoicePayment[];
 }
 
 export interface ReceiptDownload {
@@ -448,6 +477,7 @@ export interface BillingHistory {
     voided_paise: number;
     paid_count: number;
     unpaid_count: number;
+    partially_paid_count: number;
     first_invoice_at: string | null;
     last_paid_at: string | null;
   };

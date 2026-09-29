@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Compass, CopyCheck, FileText, Inbox, Landmark, LayoutDashboard, Library, LogOut, MessageSquareQuote, Package, Presentation, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
 import { api } from './api/client';
 import { useAuth } from './auth/AuthContext';
@@ -142,8 +142,30 @@ function Layout() {
    * `meta.total` when the endpoint pages (so `limit=1` fetches one row and the
    * real count), otherwise the array length. A queue that errors simply has no
    * badge; the sidebar is on every screen and must not be able to break one.
+   *
+   * A badge counts work still WAITING (a demo request still "new", a change
+   * request still pending) — it clears when the item is acted on, not when it
+   * is looked at, like any review queue. It was fetched once, when the console
+   * opened, so a request handled a minute ago kept its badge until a full
+   * reload (reported 2026-09-29: "why this number if I already viewed").
+   * Now it re-reads on every page change, when the tab comes back into focus,
+   * and once a minute.
    */
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const location = useLocation();
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTick((t) => t + 1);
+    const onVisible = () => { if (document.visibilityState === 'visible') bump(); };
+    window.addEventListener('focus', bump);
+    document.addEventListener('visibilitychange', onVisible);
+    const timer = window.setInterval(bump, 60_000);
+    return () => {
+      window.removeEventListener('focus', bump);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -160,7 +182,7 @@ function Layout() {
       if (live) setCounts(Object.fromEntries(pairs));
     });
     return () => { live = false; };
-  }, []);
+  }, [location.pathname, tick]);
 
   return (
     <div className="layout">
@@ -185,7 +207,10 @@ function Layout() {
                       the same noise as no number at all — the point is that an
                       empty queue looks empty from here and never needs opening. */}
                   {!!item.queue && (counts[item.to] ?? 0) > 0 && (
-                    <span className="ml-auto flex-shrink-0 rounded-full bg-white/20 px-1.5 text-[10px] font-bold leading-4">
+                    <span
+                      className="ml-auto flex-shrink-0 rounded-full bg-white/20 px-1.5 text-[10px] font-bold leading-4"
+                      title={`${counts[item.to]} waiting for action — clears when handled, not when viewed`}
+                    >
                       {counts[item.to]}
                     </span>
                   )}

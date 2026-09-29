@@ -82,7 +82,9 @@ export function TenantsPage() {
           <option value="custom_plan">On a custom plan</option>
         </select>
         <div className="grow" />
-        <button className="btn primary" onClick={() => setShowCreate(true)}>+ Onboard Mandir</button>
+        <button className="btn primary" data-testid="onboard-btn" onClick={() => setShowCreate(true)}>
+          {hasOnboardingDraft() ? 'Continue onboarding…' : '+ Onboard Mandir'}
+        </button>
       </div>
 
       <table className="data">
@@ -158,33 +160,85 @@ function pick<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== '' && v != null)) as Partial<T>;
 }
 
+const EMPTY_ONBOARDING = {
+  // mandir
+  name: '', temple_type: 'jain', plan: 'standard', billing_cycle: 'monthly', tenancy_tier: 'pooled',
+  // admin (signs into devmandir.com)
+  admin_name: '', admin_mobile: '', admin_email: '',
+  // address
+  line1: '', line2: '', state: '', city: '', pincode: '',
+  // public mandir contact (receipts + directory)
+  mandir_mobile: '', mandir_email: '', website: '',
+  // legal / tax
+  gstin: '', pan: '', tan: '', reg_80g_number: '', reg_12a_number: '', reg_12ab_number: '',
+  registration_number: '', darpan_number: '',
+  // bank / UPI
+  upi_id: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_name: '',
+  // sampradaya (migration 032) — only meaningful for a Jain trust
+  sect: '', sub_sect: '',
+  // directory listing
+  global_sync_enabled: false,
+  devotee_visible: true,
+};
+type OnboardingForm = typeof EMPTY_ONBOARDING;
+
+/**
+ * The half-filled onboarding form, kept for this browser tab.
+ *
+ * A form of ~35 fields used to live only in the dialog's state, so closing it
+ * — on purpose or by a stray click — threw every field away (reported
+ * 2026-09-29). sessionStorage, not localStorage: it survives a reload and a
+ * closed dialog, but not the tab, so a trust's bank account number is not left
+ * sitting in the browser after the operator is done.
+ */
+const DRAFT_KEY = 'superadmin.onboarding-draft.v1';
+interface OnboardingDraft { form: OnboardingForm; modules: string[]; savedAt: number }
+
+function readDraft(): OnboardingDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as OnboardingDraft) : null;
+  } catch {
+    return null;
+  }
+}
+function writeDraft(d: OnboardingDraft | null) {
+  try {
+    if (d) sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    else sessionStorage.removeItem(DRAFT_KEY);
+  } catch { /* storage blocked — the form still works, it just is not kept */ }
+}
+export function hasOnboardingDraft(): boolean {
+  return readDraft() !== null;
+}
+
 function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState({
-    // mandir
-    name: '', temple_type: 'jain', plan: 'standard', billing_cycle: 'monthly', tenancy_tier: 'pooled',
-    // admin (signs into devmandir.com)
-    admin_name: '', admin_mobile: '', admin_email: '',
-    // address
-    line1: '', line2: '', state: '', city: '', pincode: '',
-    // public mandir contact (receipts + directory)
-    mandir_mobile: '', mandir_email: '', website: '',
-    // legal / tax
-    gstin: '', pan: '', tan: '', reg_80g_number: '', reg_12a_number: '', reg_12ab_number: '',
-    registration_number: '', darpan_number: '',
-    // bank / UPI
-    upi_id: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_name: '',
-    // sampradaya (migration 032) — only meaningful for a Jain trust
-    sect: '', sub_sect: '',
-    // directory listing
-    global_sync_enabled: false,
-    devotee_visible: true,
-  });
+  const [restored] = useState(readDraft);
+  const [form, setForm] = useState<OnboardingForm>(() => ({ ...EMPTY_ONBOARDING, ...(restored?.form ?? {}) }));
   // Which optional modules this trust starts with (migration 031). Defaults to
   // the Full Mandir preset, so an operator who ignores this section onboards
   // exactly what they always did.
-  const [modules, setModules] = useState<string[]>(FULL_MANDIR_DEFAULT);
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+  const [modules, setModules] = useState<string[]>(restored?.modules ?? FULL_MANDIR_DEFAULT);
+  const [showRestored, setShowRestored] = useState(!!restored);
+  const set = (k: keyof OnboardingForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
+
+  // Keep the draft in step with every keystroke; an untouched form is not a draft.
+  const created = useRef(false);
+  useEffect(() => {
+    if (created.current) return;
+    const untouched = JSON.stringify(form) === JSON.stringify(EMPTY_ONBOARDING)
+      && JSON.stringify(modules) === JSON.stringify(FULL_MANDIR_DEFAULT);
+    writeDraft(untouched ? null : { form, modules, savedAt: Date.now() });
+  }, [form, modules]);
+
+  function startOver() {
+    if (!window.confirm('Clear every field and start this onboarding again?')) return;
+    writeDraft(null);
+    setForm(EMPTY_ONBOARDING);
+    setModules(FULL_MANDIR_DEFAULT);
+    setShowRestored(false);
+  }
 
   /**
    * Switching away from a Jain trust clears the sampradaya.
@@ -214,10 +268,26 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
   }, [form.state]);
 
   return (
-    <Modal title="Onboard new mandir" onClose={onClose}>
+    // The draft is the safety net, so closing needs no "are you sure".
+    <Modal title="Onboard new mandir" onClose={onClose} wide confirmDiscard={false}>
+      {showRestored && restored && (
+        <div className="draft-note" data-testid="onboarding-draft-restored">
+          <span>Picked up where you left off — draft from {new Date(restored.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.</span>
+          <button type="button" className="btn sm" onClick={startOver}>Start over</button>
+        </div>
+      )}
       <ActionForm
-        submitLabel="Create"
-        onDone={() => { onCreated(); onClose(); }}
+        submitLabel="Create mandir"
+        successMessage={null}
+        onDone={() => { created.current = true; writeDraft(null); onCreated(); onClose(); }}
+        secondary={
+          <>
+            <span className="muted" style={{ fontSize: 12, marginRight: 'auto', alignSelf: 'center' }}>
+              Your entries are kept if you close this — reopen to continue.
+            </span>
+            <button type="button" className="btn" onClick={onClose}>Close</button>
+          </>
+        }
         onSubmit={async () => {
           await api('/admin/tenants', {
             method: 'POST',
@@ -246,24 +316,26 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
         }}
       >
         <h4 className="form-section">Mandir & plan</h4>
-        <label className="field"><span>Mandir name *</span><input name="name" value={form.name} onChange={set('name')} required /></label>
-        <label className="field"><span>Temple type</span>
-          <select name="temple_type" value={form.temple_type} onChange={setTempleType}>{TEMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
-        </label>
-        <label className="field"><span>Plan</span>
-          <select name="plan" value={form.plan} onChange={set('plan')}>{PLANS.map((p) => <option key={p}>{p}</option>)}</select>
-        </label>
-        <label className="field"><span>Billing cycle</span>
-          <select name="billing_cycle" value={form.billing_cycle} onChange={set('billing_cycle')}>
-            <option value="monthly">monthly</option>
-            <option value="yearly">yearly</option>
-          </select>
-        </label>
-        <label className="field"><span>Tenancy tier (big mandir → dedicated database)</span>
-          <select name="tenancy_tier" value={form.tenancy_tier} onChange={set('tenancy_tier')}>
-            {TIERS.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-          </select>
-        </label>
+        <div className="form-grid">
+          <label className="field span-2"><span>Mandir name *</span><input name="name" value={form.name} onChange={set('name')} required /></label>
+          <label className="field"><span>Temple type</span>
+            <select name="temple_type" value={form.temple_type} onChange={setTempleType}>{TEMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+          </label>
+          <label className="field"><span>Plan</span>
+            <select name="plan" value={form.plan} onChange={set('plan')}>{PLANS.map((p) => <option key={p}>{p}</option>)}</select>
+          </label>
+          <label className="field"><span>Billing cycle</span>
+            <select name="billing_cycle" value={form.billing_cycle} onChange={set('billing_cycle')}>
+              <option value="monthly">monthly</option>
+              <option value="yearly">yearly</option>
+            </select>
+          </label>
+          <label className="field"><span>Tenancy tier (big mandir → dedicated database)</span>
+            <select name="tenancy_tier" value={form.tenancy_tier} onChange={set('tenancy_tier')}>
+              {TIERS.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+            </select>
+          </label>
+        </div>
 
         {form.temple_type === 'jain' && (
           <>
@@ -273,18 +345,82 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
               A wrong value hides it from exactly the devotees it serves, so a guess
               is worse than nothing.
             </p>
-            <label className="field"><span>Sect</span>
-              <select name="sect" value={form.sect} onChange={set('sect')}>
-                <option value="">Not recorded</option>
-                <option value="digambar">Digambar</option>
-                <option value="shwetambar">Shwetambar</option>
-              </select>
-            </label>
-            <label className="field"><span>Panth / Gaccha (optional)</span>
-              <input name="sub_sect" value={form.sub_sect} onChange={set('sub_sect')} placeholder="Terapanth, Bisapanth, Murtipujak…" />
-            </label>
+            <div className="form-grid">
+              <label className="field"><span>Sect</span>
+                <select name="sect" value={form.sect} onChange={set('sect')}>
+                  <option value="">Not recorded</option>
+                  <option value="digambar">Digambar</option>
+                  <option value="shwetambar">Shwetambar</option>
+                </select>
+              </label>
+              <label className="field"><span>Panth / Gaccha (optional)</span>
+                <input name="sub_sect" value={form.sub_sect} onChange={set('sub_sect')} placeholder="Terapanth, Bisapanth, Murtipujak…" />
+              </label>
+            </div>
           </>
         )}
+
+        <h4 className="form-section">Admin contact</h4>
+        <div className="form-grid">
+          <label className="field"><span>Admin name *</span><input name="admin_name" value={form.admin_name} onChange={set('admin_name')} required /></label>
+          <label className="field"><span>Admin mobile (10-digit) *</span>
+            <input name="admin_mobile" value={form.admin_mobile} onChange={set('admin_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" required />
+          </label>
+          <label className="field span-2"><span>Admin email</span><input name="admin_email" type="email" value={form.admin_email} onChange={set('admin_email')} /></label>
+        </div>
+
+        <h4 className="form-section">Address</h4>
+        <div className="form-grid">
+          <label className="field"><span>Address line 1</span><input name="line1" value={form.line1} onChange={set('line1')} /></label>
+          <label className="field"><span>Address line 2</span><input name="line2" value={form.line2} onChange={set('line2')} /></label>
+          <label className="field"><span>State</span>
+            <select name="state" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, city: '' })}>
+              <option value="">Select state…</option>
+              {states.map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="field"><span>City</span>
+            <select name="city" value={form.city} autoComplete="off" disabled={!form.state} onChange={set('city')}>
+              <option value="">{form.state ? 'Select city…' : 'Pick a state first'}</option>
+              {(form.city && !cities.includes(form.city) ? [form.city, ...cities] : cities).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="field"><span>Pincode</span><input name="pincode" value={form.pincode} onChange={set('pincode')} inputMode="numeric" maxLength={6} placeholder="411001" /></label>
+        </div>
+
+        <h4 className="form-section">Mandir contact (shown on receipts & directory)</h4>
+        <div className="form-grid">
+          <label className="field"><span>Mandir phone (10-digit)</span>
+            <input name="mandir_mobile" value={form.mandir_mobile} onChange={set('mandir_mobile')} inputMode="numeric" maxLength={10} placeholder="defaults to admin mobile" />
+          </label>
+          <label className="field"><span>Mandir email</span><input name="mandir_email" type="email" value={form.mandir_email} onChange={set('mandir_email')} /></label>
+          <label className="field span-2"><span>Website</span><input name="website" value={form.website} onChange={set('website')} placeholder="https://…" /></label>
+        </div>
+
+        {/* The API checks each of these (common/statutory-id.dto): PAN shape,
+            GSTIN state code + check character, TAN shape, 80G/12AB as the
+            16-character URN. Leave any the trust does not hold empty — "0"
+            or "NA" is refused, and a "0" in GSTIN used to switch GST on. */}
+        <h4 className="form-section">Legal & tax (for 80G receipts)</h4>
+        <div className="form-grid">
+          <label className="field"><span>PAN</span><input name="pan" value={form.pan} onChange={set('pan')} maxLength={10} placeholder="AAATR1234C" /></label>
+          <label className="field"><span>GSTIN (only if GST-registered)</span><input name="gstin" value={form.gstin} onChange={set('gstin')} maxLength={15} placeholder="27AAATR1234C1Z0" /></label>
+          <label className="field"><span>TAN (optional)</span><input name="tan" value={form.tan} onChange={set('tan')} maxLength={10} placeholder="MUMT12345A" /></label>
+          <label className="field"><span>80G registration (URN)</span><input name="reg_80g_number" value={form.reg_80g_number} onChange={set('reg_80g_number')} maxLength={16} placeholder="AAATR1234CF20214" /></label>
+          <label className="field"><span>Registration No.</span><input name="registration_number" value={form.registration_number} onChange={set('registration_number')} maxLength={60} placeholder="SOC/2015/CITY/000123" /></label>
+          <label className="field"><span>Darpan Registration No.</span><input name="darpan_number" value={form.darpan_number} onChange={set('darpan_number')} maxLength={40} placeholder="XX/2015/0123456" /></label>
+          <label className="field"><span>12A reg. number (before 2021)</span><input name="reg_12a_number" value={form.reg_12a_number} onChange={set('reg_12a_number')} maxLength={50} /></label>
+          <label className="field"><span>12AB registration (URN)</span><input name="reg_12ab_number" value={form.reg_12ab_number} onChange={set('reg_12ab_number')} maxLength={16} placeholder="AAATR1234CE20214" /></label>
+        </div>
+
+        <h4 className="form-section">Bank & UPI (receipt payment details)</h4>
+        <div className="form-grid">
+          <label className="field"><span>UPI ID</span><input name="upi_id" value={form.upi_id} onChange={set('upi_id')} placeholder="mandir@upi" /></label>
+          <label className="field"><span>Bank account name</span><input name="bank_account_name" value={form.bank_account_name} onChange={set('bank_account_name')} /></label>
+          <label className="field"><span>Bank account no.</span><input name="bank_account_no" value={form.bank_account_no} onChange={set('bank_account_no')} /></label>
+          <label className="field"><span>IFSC</span><input name="bank_ifsc" value={form.bank_ifsc} onChange={set('bank_ifsc')} /></label>
+          <label className="field"><span>Bank name</span><input name="bank_name" value={form.bank_name} onChange={set('bank_name')} /></label>
+        </div>
 
         <h4 className="form-section">Modules</h4>
         <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
@@ -292,58 +428,6 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
           this one runs — it can be changed later from the mandir's page.
         </p>
         <ModulePicker value={modules} onChange={setModules} templeType={form.temple_type} />
-
-        <h4 className="form-section">Admin contact</h4>
-        <label className="field"><span>Admin name *</span><input name="admin_name" value={form.admin_name} onChange={set('admin_name')} required /></label>
-        <label className="field"><span>Admin mobile (10-digit) *</span>
-          <input name="admin_mobile" value={form.admin_mobile} onChange={set('admin_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" required />
-        </label>
-        <label className="field"><span>Admin email</span><input name="admin_email" type="email" value={form.admin_email} onChange={set('admin_email')} /></label>
-
-        <h4 className="form-section">Address</h4>
-        <label className="field"><span>Address line 1</span><input name="line1" value={form.line1} onChange={set('line1')} /></label>
-        <label className="field"><span>Address line 2</span><input name="line2" value={form.line2} onChange={set('line2')} /></label>
-        <label className="field"><span>State</span>
-          <select name="state" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, city: '' })}>
-            <option value="">Select state…</option>
-            {states.map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </label>
-        <label className="field"><span>City</span>
-          <select name="city" value={form.city} autoComplete="off" disabled={!form.state} onChange={set('city')}>
-            <option value="">{form.state ? 'Select city…' : 'Pick a state first'}</option>
-            {(form.city && !cities.includes(form.city) ? [form.city, ...cities] : cities).map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-        <label className="field"><span>Pincode</span><input name="pincode" value={form.pincode} onChange={set('pincode')} inputMode="numeric" maxLength={6} placeholder="411001" /></label>
-
-        <h4 className="form-section">Mandir contact (shown on receipts & directory)</h4>
-        <label className="field"><span>Mandir phone (10-digit)</span>
-          <input name="mandir_mobile" value={form.mandir_mobile} onChange={set('mandir_mobile')} inputMode="numeric" maxLength={10} placeholder="defaults to admin mobile" />
-        </label>
-        <label className="field"><span>Mandir email</span><input name="mandir_email" type="email" value={form.mandir_email} onChange={set('mandir_email')} /></label>
-        <label className="field"><span>Website</span><input name="website" value={form.website} onChange={set('website')} placeholder="https://…" /></label>
-
-        {/* The API checks each of these (common/statutory-id.dto): PAN shape,
-            GSTIN state code + check character, TAN shape, 80G/12AB as the
-            16-character URN. Leave any the trust does not hold empty — "0"
-            or "NA" is refused, and a "0" in GSTIN used to switch GST on. */}
-        <h4 className="form-section">Legal & tax (for 80G receipts)</h4>
-        <label className="field"><span>PAN</span><input name="pan" value={form.pan} onChange={set('pan')} maxLength={10} placeholder="AAATR1234C" /></label>
-        <label className="field"><span>GSTIN (only if GST-registered)</span><input name="gstin" value={form.gstin} onChange={set('gstin')} maxLength={15} placeholder="27AAATR1234C1Z0" /></label>
-        <label className="field"><span>TAN (optional)</span><input name="tan" value={form.tan} onChange={set('tan')} maxLength={10} placeholder="MUMT12345A" /></label>
-        <label className="field"><span>80G registration (URN)</span><input name="reg_80g_number" value={form.reg_80g_number} onChange={set('reg_80g_number')} maxLength={16} placeholder="AAATR1234CF20214" /></label>
-        <label className="field"><span>Registration No.</span><input name="registration_number" value={form.registration_number} onChange={set('registration_number')} maxLength={60} placeholder="SOC/2015/CITY/000123" /></label>
-        <label className="field"><span>Darpan Registration No.</span><input name="darpan_number" value={form.darpan_number} onChange={set('darpan_number')} maxLength={40} placeholder="XX/2015/0123456" /></label>
-        <label className="field"><span>12A reg. number (before 2021)</span><input name="reg_12a_number" value={form.reg_12a_number} onChange={set('reg_12a_number')} maxLength={50} /></label>
-        <label className="field"><span>12AB registration (URN)</span><input name="reg_12ab_number" value={form.reg_12ab_number} onChange={set('reg_12ab_number')} maxLength={16} placeholder="AAATR1234CE20214" /></label>
-
-        <h4 className="form-section">Bank & UPI (receipt payment details)</h4>
-        <label className="field"><span>UPI ID</span><input name="upi_id" value={form.upi_id} onChange={set('upi_id')} placeholder="mandir@upi" /></label>
-        <label className="field"><span>Bank account name</span><input name="bank_account_name" value={form.bank_account_name} onChange={set('bank_account_name')} /></label>
-        <label className="field"><span>Bank account no.</span><input name="bank_account_no" value={form.bank_account_no} onChange={set('bank_account_no')} /></label>
-        <label className="field"><span>IFSC</span><input name="bank_ifsc" value={form.bank_ifsc} onChange={set('bank_ifsc')} /></label>
-        <label className="field"><span>Bank name</span><input name="bank_name" value={form.bank_name} onChange={set('bank_name')} /></label>
 
         <h4 className="form-section">Directory</h4>
         <label className="field-check">
