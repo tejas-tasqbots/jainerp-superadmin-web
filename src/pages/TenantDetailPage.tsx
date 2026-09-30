@@ -15,6 +15,8 @@ const MANDIR_ROLES = ['temple_admin', 'cashier', 'accountant', 'priest', 'volunt
 interface MandirUser {
   id: string; user_id: string; roles: string[]; is_active: boolean; joined_at: string;
   name: string | null; mobile: string; email: string | null;
+  /** Gets the midnight WhatsApp summary; null for anyone who is not a temple admin. */
+  daily_summary?: boolean | null;
 }
 
 export function TenantDetailPage() {
@@ -1131,9 +1133,13 @@ function UsersTab({ tenant, onNotice }: { tenant: TenantDetail; onNotice: (msg: 
   const [error, setError] = useState<unknown>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState<MandirUser | null>(null);
+  // The midnight summary's trust-wide switch — the same one as the temple's
+  // Settings → Messages; null until loaded.
+  const [summaryOn, setSummaryOn] = useState<boolean | null>(null);
 
   const load = useCallback(() => {
     api<MandirUser[]>(`/admin/tenants/${tenant.id}/users`).then((r) => setUsers(r.data)).catch(setError);
+    api<{ enabled: boolean }>(`/admin/tenants/${tenant.id}/daily-summary`).then((r) => setSummaryOn(r.data.enabled)).catch(() => setSummaryOn(null));
   }, [tenant.id]);
   useEffect(load, [load]);
 
@@ -1152,8 +1158,24 @@ function UsersTab({ tenant, onNotice }: { tenant: TenantDetail; onNotice: (msg: 
           <button className="btn primary sm" onClick={() => setShowAdd(true)}>+ Add user</button>
         </div>
         <p className="muted">Staff who sign into this mandir's admin portal. Roles control what they can do (temple_admin has full access).</p>
+        {summaryOn !== null && (
+          <div className="toolbar" data-testid="daily-summary-trust" style={{ gap: 10, margin: '4px 0 10px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={summaryOn} data-testid="daily-summary-trust-toggle" onChange={() => run(
+                () => api(`/admin/tenants/${tenant.id}/daily-summary`, { method: 'PATCH', body: { enabled: !summaryOn } }),
+                summaryOn ? 'Daily summary switched off for this mandir' : 'Daily summary switched on for this mandir',
+              )} />
+              <strong>Daily summary on WhatsApp at midnight</strong>
+            </label>
+            <span className="muted">
+              {summaryOn
+                ? 'On — each temple admin ticked under “Daily summary” gets the day’s money every night at 12.'
+                : 'Off for the whole mandir — nobody gets it, whatever the ticks below say.'}
+            </span>
+          </div>
+        )}
         <table className="data">
-          <thead><tr><th>Name</th><th>Mobile</th><th>Roles</th><th>Active</th><th>Joined</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Mobile</th><th>Roles</th><th>Active</th><th>Joined</th><th>Daily summary</th><th></th></tr></thead>
           <tbody>
             {users.map((u) => (
               <tr key={u.id}>
@@ -1162,6 +1184,20 @@ function UsersTab({ tenant, onNotice }: { tenant: TenantDetail; onNotice: (msg: 
                 <td>{u.roles.join(', ')}</td>
                 <td><Badge value={u.is_active} /></td>
                 <td>{formatDate(u.joined_at)}</td>
+                <td>
+                  {u.daily_summary == null ? <span className="muted" title="Only temple admins get the daily summary">—</span> : (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: summaryOn === false || !u.is_active ? 0.55 : 1 }}
+                      title={!u.is_active ? 'Deactivated users get nothing' : undefined}>
+                      <input type="checkbox" checked={u.daily_summary} data-testid={`daily-summary-${u.id}`}
+                        aria-label={`Send the daily summary to ${u.name ?? u.mobile}`}
+                        onChange={() => run(
+                          () => api(`/admin/tenants/${tenant.id}/users/${u.id}/daily-summary`, { method: 'PATCH', body: { receives: !u.daily_summary } }),
+                          u.daily_summary ? `${u.name ?? u.mobile} will no longer get the daily summary` : `${u.name ?? u.mobile} will get the daily summary`,
+                        )} />
+                      {u.daily_summary ? 'On' : 'Off'}
+                    </label>
+                  )}
+                </td>
                 <td>
                   <button className="btn sm" onClick={() => setEditing(u)}>Edit</button>{' '}
                   <button className="btn sm" onClick={() => run(
@@ -1176,7 +1212,7 @@ function UsersTab({ tenant, onNotice }: { tenant: TenantDetail; onNotice: (msg: 
                 </td>
               </tr>
             ))}
-            {users.length === 0 && <tr><td colSpan={6} className="muted">No portal users yet.</td></tr>}
+            {users.length === 0 && <tr><td colSpan={7} className="muted">No portal users yet.</td></tr>}
           </tbody>
         </table>
       </div>
