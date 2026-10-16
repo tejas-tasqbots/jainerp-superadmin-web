@@ -48,14 +48,7 @@ export function SetPasswordPage() {
     <div className="login-wrap">
       <div className="login-card">
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: 14, background: '#0D1B2E',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.18)'
-          }}>
-            <span style={{ color: '#fff', fontSize: 28, fontWeight: 800 }}>J</span>
-          </div>
-          <h1 style={{ margin: 0 }}>Jain<em>ERP</em></h1>
+          <h1 style={{ margin: 0 }}><img src="/logo.svg" alt="JainERP" style={{ height: 48, width: 'auto', margin: '0 auto', display: 'block' }} /></h1>
           <p className="muted" style={{ marginTop: 4 }}>Set your password</p>
         </div>
 

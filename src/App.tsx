@@ -230,7 +230,7 @@ function Layout() {
     <div className="layout">
       <aside className="sidebar">
         <div className="brand">
-          Jain<em>ERP</em>
+          <img src="/logo.svg" alt="JainERP" className="brand-logo" />
           <div className="brand-sub">Super Admin Console</div>
         </div>
         <QuickFind />

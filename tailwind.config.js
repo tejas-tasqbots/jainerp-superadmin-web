@@ -32,9 +32,9 @@ export default {
           900: '#0a1f40',
         },
         brand: {
-          red:           '#d62828',
-          'red-light':   '#f5b8b8',
-          'red-dark':    '#9e1c1c',
+          red:           '#e8600c',
+          'red-light':   '#ffd9bf',
+          'red-dark':    '#b84a08',
           gold:          '#f4c542',
           'gold-light':  '#fdf0bc',
           'gold-dark':   '#b89010',
@@ -46,8 +46,8 @@ export default {
           'blue-dark':   '#103060',
         },
         cta: {
-          DEFAULT: '#c2410c',
-          hover:   '#ea580c',
+          DEFAULT: '#c4500a',
+          hover:   '#b84a08',
         },
         danger: {
           DEFAULT: '#d94f3d',

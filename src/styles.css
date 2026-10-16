@@ -4,9 +4,9 @@
 
 /* ── Design tokens (shared with mandiradmin) ──────────────────────────────── */
 :root {
-  --color-brand-red:         #d62828;
-  --color-brand-red-light:   #f5b8b8;
-  --color-brand-red-dark:    #9e1c1c;
+  --color-brand-red:         #e8600c;
+  --color-brand-red-light:   #ffd9bf;
+  --color-brand-red-dark:    #b84a08;
   --color-brand-gold:        #f4c542;
   --color-brand-gold-light:  #fdf0bc;
   --color-brand-gold-dark:   #b89010;
@@ -25,8 +25,8 @@
   --color-navy-900: #0D1B2E;
   --color-navy-800: #13233a;
   --color-navy-700: #1b2f4a;
-  --color-cta:       #c2410c;
-  --color-cta-hover: #ea580c;
+  --color-cta:       #c4500a;
+  --color-cta-hover: #b84a08;
   --color-danger:    #d94f3d;
   --color-danger-bg: #fdf2f2;
   --color-selection: #fde9b7;
@@ -65,7 +65,7 @@
     @apply px-4 py-5 border-b border-slate-200 text-2xl font-bold leading-none tracking-tight;
     color: var(--color-navy-900);
   }
-  .sidebar .brand em { color: var(--color-brand-red); font-style: normal; }
+  .sidebar .brand-logo { display: block; height: 36px; width: auto; }
   .sidebar .brand-sub { @apply text-slate-400 text-xs mt-1 font-normal; }
   .sidebar nav { @apply flex-1 overflow-y-auto py-3 px-2 space-y-0.5; }
   .sidebar nav a {
@@ -569,7 +569,7 @@
   .dropzone.over, .dropzone:hover { border-color: var(--color-cta); background: #fff7ed; }
   .dropzone b { color: var(--color-navy-900); }
   .book-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; }
-  .book-head .cover { width: 54px; height: 70px; border-radius: 6px; background: linear-gradient(160deg, #fde9b7, #f5b8b8); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #7a3d00; flex-shrink: 0; }
+  .book-head .cover { width: 54px; height: 70px; border-radius: 6px; background: linear-gradient(160deg, #fde9b7, #ffd9bf); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #7a3d00; flex-shrink: 0; }
 }
 @layer components {
   .suggest-list { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; background: #fff; border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 20px rgba(15,23,42,.12); max-height: 240px; overflow-y: auto; }
