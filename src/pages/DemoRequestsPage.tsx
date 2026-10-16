@@ -140,6 +140,7 @@ export function DemoRequestsPage() {
   return (
     <div>
       <h1>Demo Requests</h1>
+      <p className="muted">People who asked for a demo on jainerp.org. Call them, then mark the request handled.</p>
       <ErrorBox error={error} />
 
       <div className="toolbar">

@@ -79,7 +79,8 @@ export function SectReadinessPage() {
 
   return (
     <div>
-      <h1>Sampradaya readiness</h1>
+      <h1>Sampradaya</h1>
+      <p className="muted">How many mandirs and ascetics have their tradition recorded — it decides what each devotee sees.</p>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <strong>Tradition scoping is live.</strong> A devotee's temple directory, sant list and

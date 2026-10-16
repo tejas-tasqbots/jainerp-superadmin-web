@@ -310,3 +310,281 @@
   }
   .qr { display: block; margin: 14px auto; width: 184px; height: 184px; border-radius: 8px; }
 }
+
+/* ── Page structure, filters, stepper (Manage Mandir + onboarding, 2026-10-16) ──
+   One header, one filter bar and one table frame, so every list page reads the
+   same way: what it is, what is selected, what you can do. */
+@layer components {
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .page-head h1 { margin: 0; }
+  .page-head .page-sub { @apply text-slate-500 text-sm; margin-top: 4px; max-width: 720px; }
+  .page-head .page-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  /* Deployment tabs with counts — a segmented control, not a dropdown, because
+     "how does this mandir run JainERP" is the first question asked of the list. */
+  .seg { display: inline-flex; background: #f1f5f9; border-radius: 10px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+  .seg button {
+    @apply border-none bg-transparent cursor-pointer text-slate-600 text-sm font-medium rounded-lg;
+    padding: 7px 14px; display: inline-flex; align-items: center; gap: 8px; transition: background .15s, color .15s;
+  }
+  .seg button:hover { color: var(--color-navy-900); }
+  .seg button.active { background: #fff; color: var(--color-navy-900); box-shadow: 0 1px 3px rgba(15,23,42,.12); font-weight: 600; }
+  .seg .count { @apply text-xs font-semibold rounded-full; background: #e2e8f0; color: #475569; padding: 0 7px; line-height: 18px; }
+  .seg button.active .count { background: var(--color-navy-900); color: #fff; }
+
+  .filter-bar {
+    @apply bg-white border border-slate-200 rounded-lg shadow-sm;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px; margin: 12px 0 14px;
+  }
+  .filter-bar input[type="search"] { flex: 1 1 260px; min-width: 200px; }
+  .filter-bar select { width: auto; min-width: 140px; flex: 0 0 auto; }
+  .filter-bar .grow { flex: 1; }
+  .filter-bar .clear { @apply text-xs text-slate-500 bg-transparent border-none cursor-pointer underline; }
+  .result-line { @apply text-xs text-slate-500; margin: -4px 0 8px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+  .table-wrap { overflow-x: auto; border-radius: 8px; }
+  table.data td .sub { @apply text-slate-500; font-size: 12px; line-height: 1.35; margin-top: 2px; }
+  table.data td.num, table.data th.num { text-align: right; white-space: nowrap; }
+  table.data tr.clickable { cursor: pointer; }
+  .empty { @apply text-center text-slate-500; padding: 36px 16px; }
+  .empty b { @apply block text-slate-700 text-sm mb-1; }
+
+  /* Deployment pill — the same three colours everywhere it appears. */
+  .dep { @apply inline-flex items-center rounded-full text-xs font-semibold; padding: 2px 9px; gap: 5px; }
+  .dep.online  { background: #e0ecff; color: #1a3d7c; }
+  .dep.offline { background: #fff1db; color: #8a4b00; }
+  .dep.both    { background: #ede7ff; color: #4c2a9e; }
+  .badge.demo  { background: #fde68a; color: #78350f; }
+
+  /* Onboarding stepper */
+  .stepper { display: flex; gap: 6px; margin: 0 0 18px; flex-wrap: wrap; }
+  .stepper .st {
+    flex: 1 1 0; min-width: 110px; display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 8px; background: #f8fafc; border: 1px solid var(--color-border);
+    @apply text-xs text-slate-500 font-medium cursor-pointer;
+  }
+  .stepper .st .n { @apply rounded-full text-xs font-bold; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; background: #e2e8f0; color: #475569; flex-shrink: 0; }
+  .stepper .st.done .n { background: var(--color-brand-green); color: #fff; }
+  .stepper .st.current { background: #fff; border-color: var(--color-cta); color: var(--color-navy-900); }
+  .stepper .st.current .n { background: var(--color-cta); color: #fff; }
+  .stepper .st:disabled { cursor: not-allowed; opacity: .6; }
+
+  .choice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+  @media (max-width: 720px) { .choice-grid { grid-template-columns: 1fr; } }
+  .choice {
+    @apply bg-white rounded-lg text-left cursor-pointer;
+    border: 2px solid var(--color-border); padding: 14px 16px; transition: border-color .15s, box-shadow .15s;
+  }
+  .choice:hover { border-color: #94a3b8; }
+  .choice.selected { border-color: var(--color-cta); box-shadow: 0 0 0 3px rgba(194,65,12,.12); }
+  .choice .t { @apply font-semibold text-sm; color: var(--color-navy-900); display: flex; align-items: center; gap: 8px; }
+  .choice .d { @apply text-xs text-slate-500; margin-top: 6px; line-height: 1.45; }
+
+  .review { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .review { grid-template-columns: 1fr; } }
+  .review section { @apply rounded-lg border border-slate-200; padding: 12px 14px; }
+  .review h5 { @apply text-xs font-bold uppercase tracking-wide text-slate-500; margin: 0 0 8px; display: flex; justify-content: space-between; }
+  .review h5 button { @apply text-xs font-semibold bg-transparent border-none cursor-pointer normal-case tracking-normal; color: var(--color-cta); }
+  .review dl { display: grid; grid-template-columns: 130px 1fr; row-gap: 4px; font-size: 13px; margin: 0; }
+  .review dt { @apply text-slate-500; }
+  .review dd { margin: 0; word-break: break-word; }
+  .field .hint { @apply block text-xs text-slate-500 mt-1; }
+  .field.invalid input, .field.invalid select { border-color: var(--color-danger); }
+  .field .err { @apply block text-xs mt-1; color: var(--color-danger); }
+
+  /* Dashboard sections */
+  .section-title { @apply text-xs font-bold uppercase tracking-wider text-slate-500; margin: 22px 0 10px; display: flex; align-items: center; gap: 10px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--color-border); }
+  .stat.primary { border-top: 3px solid var(--color-cta); }
+  .stat a.stat-link { @apply text-xs font-semibold; display: inline-block; margin-top: 8px; }
+  .notice {
+    @apply rounded-lg text-sm; display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap;
+    background: #fffbeb; border: 1px solid #fcd34d; color: #78350f; padding: 10px 14px; margin-bottom: 14px;
+  }
+}
+
+/* ── Console-wide standards (2026-10-16) ────────────────────────────────────── */
+@layer components {
+  /* Sidebar: the group headings and queue counts were white-on-white (styled
+     for a dark sidebar that this is not) and so invisible. */
+  .sidebar .nav-heading { @apply px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400; }
+  .sidebar .nav-count {
+    @apply ml-auto flex-shrink-0 rounded-full text-[10px] font-bold leading-4 text-white;
+    background: var(--color-brand-red); padding: 0 6px; min-width: 18px; text-align: center;
+  }
+  /* A tint and an accent bar, not a solid red block: the page is the subject,
+     the menu is where you are. */
+  .sidebar nav a.active { background: #fff1ec; color: var(--color-cta); font-weight: 600; box-shadow: inset 3px 0 0 var(--color-cta); }
+  .sidebar nav a.active:hover { background: #ffe6dc; color: var(--color-cta); }
+  .sidebar nav a.active .nav-count { background: var(--color-cta); }
+  .sidebar nav a { padding-top: 8px; padding-bottom: 8px; }
+  .quickfind { padding: 10px 12px 2px; }
+  .quickfind input { @apply text-sm; padding: 7px 10px; background: #f8fafc; }
+
+  /* Breadcrumb above a detail page's title. */
+  .crumbs { @apply text-xs text-slate-500; margin-bottom: 6px; }
+  .crumbs a { color: var(--color-text-secondary); }
+  .crumbs a:hover { color: var(--color-cta); }
+
+  /* Pages that open with a bare <h1> + an explanatory paragraph get the same
+     rhythm as PageHeader, without rewriting each one. */
+  .main > div > h1:first-child { margin-bottom: 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .main > div > h1:first-child + p.muted { max-width: 760px; font-size: 13.5px; line-height: 1.5; margin: 0 0 18px; }
+  .main > div > h1:first-child + .error-box,
+  .main > div > h1:first-child + div { margin-top: 14px; }
+
+  table.data td { vertical-align: top; }
+  .main { background: var(--color-bg); }
+  .toolbar input:not([type="checkbox"]), .toolbar select { width: auto; min-width: 160px; }
+  .toolbar input[type="search"], .toolbar input:not([type]) { flex: 1 1 240px; }
+}
+@layer components {
+  .card > p.muted + dl.kv { margin-top: 12px; }
+  .card > p.muted { margin-top: 0; }
+}
+@layer components {
+  .badge, .dep { white-space: nowrap; }
+  .filter-bar select { min-width: 0; max-width: 180px; padding-right: 28px; }
+  .filter-bar input[type="search"] { flex: 1 1 220px; }
+}
+@layer components {
+  /* Destructive actions inside a table are outlined until hovered, so a column
+     of red buttons does not out-shout the rows they belong to. */
+  table.data .btn.danger { background: #fff; color: var(--color-danger); border-color: #f3c4bd; }
+  table.data .btn.danger:hover:not(:disabled) { background: var(--color-danger); color: #fff; border-color: transparent; }
+}
+@layer components {
+  /* Four cards fall 2×2 on a narrower window instead of 3 + an orphan. */
+  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+}
+@layer components {
+  /* Tabs stay one line and scroll sideways on a narrow window, instead of
+     wrapping each label onto three lines and cutting off the last tab. */
+  .tabs { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+  .tabs button { white-space: nowrap; flex-shrink: 0; }
+}
+@layer components {
+  /* Buttons under a card's content: spaced, wrapping, clear of the rows above. */
+  .card > .actions, .card .actions:not(.modal .actions) { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+}
+@layer components {
+  /* A wide table inside a card scrolls sideways rather than spilling out of it. */
+  .card:has(> table.data) { overflow-x: auto; }
+}
+@layer components {
+  /* Manage Mandir: the name column keeps a readable width; a long slug breaks
+     at its hyphens, not one letter per line. */
+  tr.dir-row > td:first-child { min-width: 240px; }
+  tr.dir-row > td:first-child .sub { word-break: normal; overflow-wrap: anywhere; }
+  tr.dir-row > td:nth-child(5) { min-width: 130px; }
+}
+@layer components {
+  .sidebar .whoami .role { @apply text-[11px] font-semibold uppercase tracking-wide text-slate-400; margin-top: 1px; }
+  /* Team & roles */
+  .role-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  @media (max-width: 720px) { .role-cards { grid-template-columns: 1fr; } }
+  .perm-matrix td.yes { color: var(--color-brand-green); font-weight: 700; text-align: center; }
+  .perm-matrix td.no { color: #cbd5e1; text-align: center; }
+  .perm-matrix th.role-col { text-align: center; }
+}
+@layer components {
+  /* Billing → aging: a bar per bucket, the amount at the end. */
+  .aging { display: grid; gap: 10px; margin: 6px 0 12px; }
+  .aging-row { display: grid; grid-template-columns: 120px 1fr 120px; align-items: center; gap: 12px; font-size: 13px; }
+  .aging-label { @apply text-slate-600; }
+  .aging-bar { height: 12px; background: #f1f5f9; border-radius: 6px; overflow: hidden; }
+  .aging-bar .fill { display: block; height: 100%; background: var(--color-brand-green); border-radius: 6px; min-width: 2px; }
+  .aging-bar .fill.overdue { background: var(--color-danger); }
+  .aging-amt { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .filter-bar .seg { padding: 2px; }
+  .filter-bar .seg button { padding: 5px 11px; }
+}
+@layer components {
+  /* Sadhu-Sadhvi profile header inside its dialog. */
+  .profile-head { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+  .profile-head img, .profile-head .ph { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+  .profile-head .ph { display: flex; align-items: center; justify-content: center; background: #fde9b7; color: #7a5c00; font-weight: 700; font-size: 22px; }
+  .profile-head .nm { font-size: 17px; font-weight: 700; color: var(--color-navy-900); }
+}
+@layer components {
+  /* Every list page's top toolbar is the same filter panel as Manage Mandir. */
+  .main > div > .toolbar {
+    @apply bg-white border border-slate-200 rounded-lg shadow-sm;
+    padding: 10px 12px; margin: 12px 0 14px;
+  }
+  .main > div > .toolbar > p.muted { margin: 0; font-size: 13px; }
+  .main > div > table.data, .main > div > .card > table.data { margin-bottom: 4px; }
+  /* Page sub-tabs (Settings, Sanghs…) sit flush under the header. */
+  .main > div > .tabs { margin-top: 4px; }
+}
+@layer components {
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
+  .detail-grid > :not(label.field), .detail-grid > label.field:has(textarea) { grid-column: 1 / -1; }
+  @media (max-width: 720px) { .detail-grid { grid-template-columns: 1fr; } }
+  /* Row actions on one line, not stacked three high. */
+  td.row-actions { white-space: nowrap; text-align: right; }
+  td.row-actions .btn { margin-left: 4px; }
+}
+@layer components {
+  /* Subscription: this term beside the next renewal. */
+  .term-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+  @media (max-width: 860px) { .term-grid { grid-template-columns: 1fr; } }
+  .term { @apply rounded-lg border border-slate-200; padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
+  .term.next { border-color: #fdba74; background: #fffaf5; }
+  .term-k { @apply text-xs font-bold uppercase tracking-wide text-slate-500; }
+  .term-period { @apply text-sm text-slate-700; }
+  .term-price { font-size: 20px; font-weight: 700; color: var(--color-navy-900); }
+  .term-price .muted { font-size: 13px; font-weight: 400; }
+}
+@layer components {
+  /* Lead view: details beside the timeline. */
+  .lead-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 18px; }
+  @media (max-width: 860px) { .lead-grid { grid-template-columns: 1fr; } }
+  .log-form { @apply rounded-lg border border-slate-200; padding: 10px 12px; background: #f8fafc; }
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--color-border); display: grid; gap: 12px; max-height: 360px; overflow-y: auto; }
+  .timeline li { position: relative; font-size: 13px; }
+  .timeline li::before { content: ''; position: absolute; left: -20px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: #cbd5e1; border: 2px solid #fff; }
+  .timeline li.k-call::before, .timeline li.k-whatsapp::before, .timeline li.k-meeting::before, .timeline li.k-email::before { background: var(--color-brand-blue); }
+  .timeline li.k-stage::before { background: var(--color-cta); }
+  .timeline .t-body { white-space: pre-wrap; margin-top: 2px; color: var(--color-text-primary); }
+}
+@layer components {
+  /* Rich text editor (components/RichTextEditor.tsx). */
+  .rte { @apply rounded-md border border-slate-300 bg-white; overflow: hidden; }
+  .rte:focus-within { border-color: var(--color-brand-blue); box-shadow: 0 0 0 2px var(--color-brand-blue-light); }
+  .rte-bar { display: flex; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--color-border); background: #f8fafc; flex-wrap: wrap; }
+  .rte-bar button { @apply text-slate-600 rounded; border: none; background: transparent; padding: 5px 7px; cursor: pointer; display: inline-flex; }
+  .rte-bar button:hover { background: #e2e8f0; color: var(--color-navy-900); }
+  .rte-body { padding: 10px 12px; outline: none; font-size: 14px; line-height: 1.55; }
+  .rte-body:empty::before { content: attr(data-placeholder); color: #94a3b8; }
+  .rte-body h3, .rte-view h3 { font-size: 15px; font-weight: 700; margin: 8px 0 4px; }
+  .rte-body ul, .rte-view ul { list-style: disc; padding-left: 22px; margin: 4px 0; }
+  .rte-body ol, .rte-view ol { list-style: decimal; padding-left: 22px; margin: 4px 0; }
+  .rte-body blockquote, .rte-view blockquote { border-left: 3px solid #fdba74; padding-left: 10px; color: #475569; margin: 6px 0; }
+  .rte-body p, .rte-view p { margin: 0 0 6px; }
+  .rte-body a, .rte-view a { text-decoration: underline; }
+  .rte-view { font-size: 14px; line-height: 1.6; }
+  /* Upload drop zone */
+  .dropzone { @apply rounded-lg text-center; border: 2px dashed #cbd5e1; padding: 22px 16px; background: #f8fafc; cursor: pointer; transition: border-color .15s, background .15s; }
+  .dropzone.over, .dropzone:hover { border-color: var(--color-cta); background: #fff7ed; }
+  .dropzone b { color: var(--color-navy-900); }
+  .book-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; }
+  .book-head .cover { width: 54px; height: 70px; border-radius: 6px; background: linear-gradient(160deg, #fde9b7, #f5b8b8); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #7a3d00; flex-shrink: 0; }
+}
+@layer components {
+  .suggest-list { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; background: #fff; border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 20px rgba(15,23,42,.12); max-height: 240px; overflow-y: auto; }
+  .suggest-list button { display: block; width: 100%; text-align: left; padding: 8px 12px; border: none; background: transparent; cursor: pointer; font-size: 13px; }
+  .suggest-list button:hover { background: #f1f5f9; }
+}
+@layer components {
+  /* Every table: a lone "nothing here" row reads as an empty state, and the
+     last column's buttons sit on one line, right-aligned — on every page,
+     not only the ones rebuilt. */
+  table.data tbody tr:only-child > td[colspan] { text-align: center; padding: 36px 16px; color: var(--color-text-muted); }
+  table.data td:last-child:has(> .btn), table.data td:last-child:has(> button) { white-space: nowrap; text-align: right; }
+  table.data td:last-child > .btn + .btn, table.data td:last-child > button + button { margin-left: 4px; }
+}
+@layer components {
+  .enquiry-tabs { margin-bottom: 16px; }
+  .seg .count.attn { background: var(--color-brand-red); color: #fff; }
+}

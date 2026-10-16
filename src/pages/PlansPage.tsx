@@ -1,3 +1,6 @@
+import { Plus } from 'lucide-react';
+import { PageHeader } from '../components/PageHeader';
+import { useCan } from '../auth/permissions';
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatPaise } from '../api/client';
 import { ActionForm, ErrorBox, Modal } from '../components/ui';
@@ -43,6 +46,7 @@ function limit(n: number | null | undefined): string {
 }
 
 export function PlansPage() {
+  const canBill = useCan('billing.manage');
   const [rows, setRows] = useState<Plan[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -55,19 +59,12 @@ export function PlansPage() {
 
   return (
     <div>
-      <h1>Subscription Plans</h1>
+      <PageHeader
+        title="Plans"
+        subtitle={<>The plans mandirs subscribe to — prices are what they pay, limits gate their usage. <b>Published</b> plans appear on jainerp.org and in self-serve registration at these exact prices; no deploy is needed to change them. One mandir's own price is set on its page (Set custom plan, or the next renewal price).</>}
+        actions={canBill && <button className="btn primary" data-testid="new-plan" onClick={() => setShowCreate(true)}><Plus size={15} /> New plan</button>}
+      />
       <ErrorBox error={error} />
-      <div className="toolbar">
-        <p className="muted" style={{ margin: 0 }}>
-          Define the plans mandirs can subscribe to. Prices are what temples pay; limits gate their usage.
-          A single mandir can be given bespoke pricing without a new plan — see <b>Set custom plan</b> on its detail page.
-          <br />
-          <b>Published</b> plans appear on jainerp.org and in the self-serve registration wizard with these exact
-          prices, modules and limits — no deploy is needed to change them.
-        </p>
-        <div className="grow" />
-        <button className="btn primary" onClick={() => setShowCreate(true)}>+ New Plan</button>
-      </div>
 
       <table className="data">
         <thead>
@@ -98,7 +95,7 @@ export function PlansPage() {
                 {p.is_public && <div><span className="badge blue" data-testid={`plan-public-${p.name}`}>Published</span></div>}
                 {p.is_custom && <div><span className="badge">Quote only</span></div>}
               </td>
-              <td>
+              <td>{canBill && <>
                 <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>{' '}
                 {/* A plan in use can only be archived — deleting it would orphan
                     the FK from tenants/subscriptions and break billing history. */}
@@ -115,7 +112,7 @@ export function PlansPage() {
                 >
                   Delete
                 </button>
-              </td>
+              </>}</td>
             </tr>
           ))}
           {rows.length === 0 && <tr><td colSpan={9} className="muted">No plans defined yet.</td></tr>}

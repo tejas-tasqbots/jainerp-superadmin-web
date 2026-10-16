@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, type ApiMeta } from '../api/client';
 import type { MaharajProfile, Sangh } from '../api/types';
-import { ActionForm, Badge, ErrorBox, Modal, Pagination, useToast } from '../components/ui';
+import { ActionForm, ErrorBox, Modal, Pagination, useToast } from '../components/ui';
 import { PhotoPicker } from '../components/PhotoPicker';
 import { StateSelect, CitySelect } from '../components/GeoSelect';
 import { LocationPicker } from '../components/LocationPicker';
+import { PageHeader, EmptyRow } from '../components/PageHeader';
+import { SantWizard, hasSantDraft } from '../components/SantWizard';
+import { useCan } from '../auth/permissions';
+import { Plus, Upload } from 'lucide-react';
 
 /** One row of the cross-profile queue. */
 interface GlobalRepRequest {
@@ -47,6 +51,7 @@ export function MaharajPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [manageId, setManageId] = useState<string | null>(null);
   const toast = useToast();
+  const canCurate = useCan('content.manage');
 
   const load = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
@@ -106,7 +111,16 @@ export function MaharajPage() {
   return (
     <div>
       {toast.node}
-      <h1>Sadhu-Sadhvi Directory</h1>
+      <PageHeader
+        title="Sadhu-Sadhvi"
+        subtitle="The directory devotees follow: every ascetic, their sangh, where they are now — and who may update them."
+        actions={canCurate && <>
+          <button className="btn" onClick={() => setShowImport(true)}><Upload size={15} /> Import list</button>
+          <button className="btn primary" data-testid="add-sant" onClick={() => setShowCreate(true)}>
+            {hasSantDraft() ? 'Continue adding…' : <><Plus size={15} /> Add Sadhu-Sadhvi</>}
+          </button>
+        </>}
+      />
       <ErrorBox error={error} />
 
       {queue.length > 0 && (
@@ -142,15 +156,15 @@ export function MaharajPage() {
         </div>
       )}
 
-      <div className="toolbar">
+      <div className="filter-bar">
         {/* Searches BOTH scripts — a curator looking for a Devanagari name used
             to find nothing and add the ascetic a second time. */}
-        <input placeholder="Search name (either script) / samuday…" value={q}
+        <input type="search" aria-label="Search" placeholder="Search name (English or हिन्दी), samuday…" value={q}
           onChange={(e) => { setQ(e.target.value); setPage(1); }} />
-        <select value={verifiedFilter} onChange={(e) => { setVerifiedFilter(e.target.value); setPage(1); }}>
-          <option value="">All</option>
-          <option value="false">Pending verification</option>
-          <option value="true">Verified</option>
+        <select aria-label="Published" value={verifiedFilter} onChange={(e) => { setVerifiedFilter(e.target.value); setPage(1); }}>
+          <option value="">Published or not</option>
+          <option value="false">Not published yet</option>
+          <option value="true">Published</option>
         </select>
         <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
           <option value="">Living &amp; samadhistha</option>
@@ -178,29 +192,30 @@ export function MaharajPage() {
           <option value={200}>200 / page</option>
         </select>
         <div className="grow" />
-        <button className="btn" onClick={() => setShowImport(true)}>Import list</button>
-        <button className="btn" disabled={selected.length === 0} onClick={() => setShowBulk(true)}>
-          Set location{selected.length ? ` (${selected.length})` : ''}
-        </button>
-        <button className="btn" disabled={selected.length === 0} onClick={() => setShowBulkSangh(true)}>
-          Set sangh{selected.length ? ` (${selected.length})` : ''}
-        </button>
+        {canCurate && selected.length > 0 && <span className="muted" style={{ fontSize: 12 }}>{selected.length} selected:</span>}
+        {canCurate && selected.length > 0 && <button className="btn" onClick={() => setShowBulk(true)}>
+          Set location
+        </button>}
+        {canCurate && selected.length > 0 && <button className="btn" onClick={() => setShowBulkSangh(true)}>
+          Set sangh
+        </button>}
         {/* The seeded directory (migration 049) lands unverified on purpose, so
             publishing it one row at a time would be a few thousand clicks and
             therefore would not happen. Explicit selection only — there is no
             "verify everything matching this filter", because the unverified
             state exists precisely so that somebody reads them. */}
-        <button className="btn" disabled={selected.length === 0} onClick={() => run(
+        {canCurate && selected.length > 0 && <button className="btn" onClick={() => run(
           () => api('/admin/maharaj/bulk-verify', {
             method: 'POST', body: { sant_ids: selected, verified: true },
           }).then(() => setSelected([])),
           `${selected.length} verified — now visible to devotees.`,
         )}>
-          Verify{selected.length ? ` (${selected.length})` : ''}
-        </button>
-        <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add Sadhu-Sadhvi</button>
+          Publish
+        </button>}
       </div>
+      <div className="result-line"><span>{meta ? `${meta.total.toLocaleString('en-IN')} profile${meta.total === 1 ? '' : 's'}` : 'Loading…'}</span></div>
 
+      <div className="table-wrap">
       <table className="data">
         <thead>
           <tr>
@@ -228,8 +243,8 @@ export function MaharajPage() {
                 )}
               </td>
               <td>
-                {m.name_en || m.name}
-                {m.samuday ? <div className="muted" style={{ fontSize: 11 }}>{m.samuday}</div> : null}
+                <a href="#manage" onClick={(e) => { e.preventDefault(); setManageId(m.id); }}><strong>{m.name_en || m.name}</strong></a>
+                {m.samuday ? <div className="sub">{m.samuday}</div> : null}
               </td>
               {/* Its own column, not a subtitle: the readiness filter above is
                   about the blanks in it, and a blank is only obvious in a column. */}
@@ -283,8 +298,8 @@ export function MaharajPage() {
               <td>{m.is_samadhistha ? <span className="muted">—</span> : m.followers_count}</td>
               <td>
                 {m.is_samadhistha
-                  ? <span className="muted">Samadhistha</span>
-                  : <Badge value={m.verified} />}
+                  ? <span className="badge">samadhistha</span>
+                  : m.verified ? <span className="badge green">published</span> : <span className="badge">not published</span>}
                 {/* ── TWO DIFFERENT CLAIMS, SHOWN SEPARATELY ─────────────────
                     `verified` (the badge above) is whether devotees can SEE
                     this profile. `verification_state` is whether anyone has
@@ -303,8 +318,8 @@ export function MaharajPage() {
                 </div>
                 <div className="muted" style={{ fontSize: 11 }}>{formatDate(m.created_at)}</div>
               </td>
-              <td>
-                <button className="btn sm" onClick={() => setManageId(m.id)}>Manage</button>{' '}
+              <td className="row-actions">
+                {canCurate && <>
                 {!m.verified ? (
                   <button className="btn sm primary" onClick={() => run(() =>
                     api(`/admin/maharaj/${m.id}/verify`, { method: 'PATCH', body: { verified: true } }),
@@ -327,18 +342,19 @@ export function MaharajPage() {
                     `${m.name} is marked as checked — devotees now see a blue tick.`,
                   )}>Mark checked</button>
                 )}
+                </>}
               </td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={10} className="muted">No profiles found.</td></tr>}
+          {meta && rows.length === 0 && <EmptyRow colSpan={10} title="No profiles match.">Try the other script, or clear a filter.</EmptyRow>}
         </tbody>
       </table>
+      </div>
       {meta && <Pagination page={page} total={meta.total} limit={limit} onPage={setPage} />}
 
       {showCreate && (
-        <Modal title="Add Sadhu-Sadhvi" onClose={() => setShowCreate(false)}>
-          <MaharajCreateForm onDone={() => { setShowCreate(false); load(); toast.show('Profile created.'); }} />
-        </Modal>
+        <SantWizard sanghs={sanghs} onClose={() => setShowCreate(false)}
+          onCreated={(id, name) => { setShowCreate(false); load(); loadSanghs(); toast.show(`${name} added.`); setManageId(id); }} />
       )}
       {showImport && (
         <Modal title="Import a sant list" onClose={() => setShowImport(false)}>
@@ -363,7 +379,7 @@ export function MaharajPage() {
         </Modal>
       )}
       {manageId && (
-        <Modal title="Manage profile" onClose={() => setManageId(null)}>
+        <Modal title="Sadhu-Sadhvi profile" onClose={() => setManageId(null)} wide>
           <MaharajManage id={manageId} sanghs={sanghs} onClose={() => setManageId(null)}
             onChanged={load} onToast={toast.show} />
         </Modal>
@@ -447,119 +463,7 @@ function padsFor(type: string, sect: string) {
   return PADS.filter((p) => p.value === 'none');
 }
 
-function MaharajCreateForm({ onDone }: { onDone: () => void }) {
-  const [form, setForm] = useState({
-    name_en: '', name_hi: '', type: 'muni', pad: 'none', samuday: '', sect: '', sub_sect: '',
-    state: '', city: '',
-    diksha_year: '', guru_name: '', bio: '', rep_mobile: '', rep_name: '',
-    photo_base64: '', verified: false,
-  });
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-    setForm({ ...form, [k]: e.target.value });
-
-  return (
-    <ActionForm submitLabel="Create" onDone={onDone} successMessage={null}
-      onSubmit={async () => {
-        await api('/admin/maharaj', {
-          method: 'POST',
-          body: {
-            // `name` is the canonical display value every reader falls back to.
-            // Whichever script the curator filled in becomes it; the API works
-            // the pair out from there and never transliterates.
-            name: form.name_en || form.name_hi,
-            name_en: form.name_en || undefined,
-            name_hi: form.name_hi || undefined,
-            type: form.type, pad: form.pad || undefined,
-            samuday: form.samuday || undefined,
-            // Sampradaya is a separate field from samuday (migration 024) and
-            // this form never sent it, so every sant added from the console
-            // arrived sect NULL. `|| undefined` because the DTO validates
-            // against the two sects — '' would 400.
-            sect: form.sect || undefined, sub_sect: form.sub_sect || undefined,
-            state: form.state || undefined, city: form.city || undefined,
-            diksha_year: form.diksha_year ? Number(form.diksha_year) : undefined,
-            guru_name: form.guru_name || undefined, bio: form.bio || undefined,
-            rep_mobile: form.rep_mobile || undefined, verified: form.verified,
-            // Sent with the create so a curator attaches the photograph in one
-            // step, rather than saving a faceless profile and reopening it.
-            photo_base64: form.photo_base64 || undefined,
-          },
-        });
-      }}>
-      {/* Both scripts. At least one is required — the API refuses a nameless
-          profile — and whichever is left blank falls back on read, so a curator
-          working from a single-script list is never forced to invent the other. */}
-      <label className="field"><span>Name (English)</span>
-        <input value={form.name_en} onChange={set('name_en')} placeholder="Muni Kshamasagar Ji" />
-      </label>
-      <label className="field"><span>Name (Hindi / Devanagari)</span>
-        <input value={form.name_hi} onChange={set('name_hi')} placeholder="मुनि क्षमासागर जी" lang="hi" />
-      </label>
-      {!form.name_en && !form.name_hi && (
-        <p className="muted" style={{ fontSize: 12, marginTop: -8 }}>Enter the name in at least one script.</p>
-      )}
-      <label className="field"><span>Sampradaya</span>
-        <select value={form.sect} onChange={(e) => setForm({
-          ...form, sect: e.target.value, sub_sect: '',
-          // Changing tradition can strand a rank and a post that belong to the
-          // other one; clear rather than submit a pair the API will reject.
-          type: typesForSect(e.target.value)[0]?.value ?? form.type,
-          pad: 'none',
-        })}>
-          {SECTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-      </label>
-      <label className="field"><span>Type (rank)</span>
-        <select value={form.type} onChange={(e) => setForm({
-          ...form, type: e.target.value,
-          pad: padsFor(e.target.value, form.sect).some((p) => p.value === form.pad) ? form.pad : 'none',
-        })}>
-          {typesForSect(form.sect).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
-      </label>
-      <label className="field"><span>Pad (post held)</span>
-        <select value={form.pad} onChange={set('pad')}>
-          {padsFor(form.type, form.sect).map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
-      </label>
-      {/* samuday, sect and sub_sect are three different things (migration 024).
-          This field was labelled "Samuday / Sect" and suggested "Tapagachha" —
-          a gaccha, i.e. a sub_sect — which conflated all three at once. */}
-      <label className="field"><span>Samuday (community)</span><input value={form.samuday} onChange={set('samuday')} placeholder="e.g. Oswal, Porwal, Agarwal" /></label>
-      {form.sect && (
-        <label className="field"><span>Panth / Gaccha</span>
-          <input value={form.sub_sect} onChange={set('sub_sect')}
-            placeholder={form.sect === 'digambar' ? 'Terapanth, Bisapanth, Taran Panth…' : 'Murtipujak, Sthanakvasi, Tapagachha…'} />
-        </label>
-      )}
-      <label className="field"><span>State</span>
-        <StateSelect value={form.state} onChange={(s) => setForm({ ...form, state: s, city: '' })} />
-      </label>
-      <label className="field"><span>City (home base)</span>
-        <CitySelect state={form.state} value={form.city} onChange={(c) => setForm({ ...form, city: c })} />
-      </label>
-      <label className="field"><span>Diksha year</span><input type="number" value={form.diksha_year} onChange={set('diksha_year')} /></label>
-      <label className="field"><span>Guru name</span><input value={form.guru_name} onChange={set('guru_name')} /></label>
-      <label className="field"><span>Bio</span><textarea value={form.bio} onChange={set('bio')} rows={3} /></label>
-      <PhotoPicker value={form.photo_base64} onChange={(v) => setForm({ ...form, photo_base64: v })} />
-      {/* THE HANDOVER. Whoever is named here becomes the profile's Sanghpati admin:
-          they can then add and remove the other sangh representatives themselves,
-          without coming back to us. Leaving it blank creates a profile nobody
-          can manage until somebody is added from the Sangh Representatives tab. */}
-      <label className="field"><span>Sanghpati admin mobile (their login)</span>
-        <input value={form.rep_mobile} onChange={set('rep_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" />
-      </label>
-      <p className="muted" style={{ fontSize: 12, marginTop: -8 }}>
-        They are invited by WhatsApp or SMS and become the Sanghpati admin, who manages the other
-        sangh representatives. Leave blank for a historical record with no sangh representative.
-      </p>
-      <label className="field-check">
-        <input type="checkbox" checked={form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
-        <span>Mark verified (visible to devotees immediately)</span>
-      </label>
-    </ActionForm>
-  );
-}
+// Adding a profile: components/SantWizard.tsx (the guided form).
 
 interface Rep {
   id: string; mobile: string; name: string | null; user_id: string | null;
@@ -639,9 +543,21 @@ function MaharajManage({ id, sanghs, onClose, onChanged, onToast }: {
         </div>
       )}
 
-      <div className="tabs" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div className="profile-head">
+        {p.photo_url || p.photo_base64 ? <img src={p.photo_base64 || p.photo_url || ''} alt="" /> : <div className="ph">{(p.name_hi || p.name_en || p.name || '?').slice(0, 1)}</div>}
+        <div>
+          <div className="nm">{p.name_hi || p.name_en || p.name}</div>
+          {p.name_hi && p.name_en && <div className="muted">{p.name_en}</div>}
+          <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+            <span className="badge blue">{p.type}{p.pad && p.pad !== 'none' ? ` · ${p.pad}` : ''}</span>
+            {p.is_samadhistha ? <span className="badge">samadhistha</span> : p.verified ? <span className="badge green">published</span> : <span className="badge">not published</span>}
+            {p.verification_state === 'verified' && <span className="badge blue">✓ data checked</span>}
+          </div>
+        </div>
+      </div>
+      <div className="tabs">
         {(['details', 'location', 'reps', 'samadhi'] as const).map((t) => (
-          <button key={t} className={`btn sm ${tab === t ? 'primary' : ''}`} onClick={() => setTab(t)}>
+          <button key={t} type="button" className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
             {t === 'details' ? 'Details'
               : t === 'location' ? 'Location'
               : t === 'reps' ? `Sangh Representatives${p.rep_requests?.some((r) => r.status === 'pending') ? ' •' : ''}`
@@ -789,6 +705,9 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
             await api(`/admin/maharaj/${p.id}/verify`, { method: 'PATCH', body: { verified: form.verified } });
           }
         }}>
+        {/* Two columns in the wide dialog; long text, checkboxes and section
+            notes take the full width (styles.css .detail-grid). */}
+        <div className="detail-grid">
         <label className="field"><span>Name (English)</span>
           <input value={form.name_en} onChange={set('name_en')} />
         </label>
@@ -939,9 +858,10 @@ function DetailsTab({ p, sanghs, onDone, onDeleted }: {
           <input value={form.source_url} onChange={set('source_url')} placeholder="https://…" /></label>
         <label className="field"><span>Source credit</span>
           <input value={form.source_credit} onChange={set('source_credit')} /></label>
+        </div>
         <label className="field-check">
           <input type="checkbox" checked={form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
-          <span>Verified (visible to devotees)</span>
+          <span>Published (visible to devotees)</span>
         </label>
       </ActionForm>
 

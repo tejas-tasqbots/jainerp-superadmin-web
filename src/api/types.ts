@@ -16,12 +16,71 @@ export interface DashboardStats {
   subscriptions: {
     mrr_paise: number;
     arr_paise: number;
+    /** Live customers whose subscription is worth more than ₹0 (migration 094). */
+    paying_tenants?: number;
     pending_amount_paise: number;
     pending_invoices: number;
     past_due_tenants: number;
   };
+  /** Customers by how they run JainERP; demo mandirs are counted only here (migration 094). */
+  directory?: { online: number; offline: number; both: number; demo: number; suspected_demo: number };
+  /** JainERP Offline licences, annualised. */
+  offline?: { arr_paise: number; paying_mandirs: number; unpaid_paise: number; unpaid_mandirs: number };
+  total_arr_paise?: number;
   growth: { signups_this_month: number; churned_this_month: number };
   devotees: { total: number; verified: number };
+}
+
+export type Deployment = 'online' | 'offline' | 'both';
+
+/** One row of Manage Mandir — a cloud tenant (online / both) or an offline-only install. */
+export interface DirectoryRow {
+  source: 'tenant' | 'offline';
+  /** tenants.id for online/both, offline_mandirs.id for offline. */
+  id: string;
+  tenant_id: string | null;
+  offline_id: string | null;
+  deployment: Deployment;
+  name: string;
+  /** Slug online, OFF- reference offline. */
+  code: string;
+  offline_reference: string | null;
+  city: string | null;
+  state: string | null;
+  contact_name: string | null;
+  mobile: string | null;
+  status: string;
+  is_active: boolean;
+  is_deleted: boolean;
+  access_enabled: boolean | null;
+  access_block_reason: string | null;
+  devotee_visible: boolean | null;
+  plan: string | null;
+  is_custom_plan: boolean | null;
+  is_demo: boolean;
+  licence_valid_until: string | null;
+  licence_state: 'none' | 'active' | 'expiring' | 'grace' | 'expired';
+  dues_paise: number;
+  created_at: string;
+}
+
+export interface SuspectedDemo {
+  id: string;
+  name: string;
+  slug: string;
+  mobile: string | null;
+  created_at: string;
+}
+
+export interface OnboardingDraftRow {
+  id: string;
+  deployment: Deployment;
+  title: string | null;
+  step: number;
+  tenant_id: string | null;
+  updated_at: string;
+  created_by_name: string | null;
+  updated_by_name: string | null;
 }
 
 export interface PendingSubscriptionRow {
@@ -54,6 +113,7 @@ export interface TenantRow {
   access_block_reason: string | null;
   address: Record<string, string>;
   pending_amount_paise: number;
+  is_demo?: boolean;
   created_at: string;
 }
 
@@ -118,6 +178,11 @@ export interface Requirement {
 
 export interface TenantDetail {
   id: string;
+  /** Tasqbots demo / test mandir — out of revenue and counts (migration 094). */
+  is_demo?: boolean;
+  /** Its JainERP Offline record when onboarded for both. */
+  offline_mandir?: { id: string; reference: string } | null;
+  sect?: string | null;
   slug: string;
   name: string;
   temple_type: string;
@@ -181,6 +246,9 @@ export interface Invoice {
   id: string;
   tenantId: string;
   invoiceNumber: string;
+  /** Pay by (migration 095); null on older invoices — read as issue date + 15 days. */
+  dueDate?: string | null;
+  createdAt?: string;
   periodStart: string;
   periodEnd: string;
   subtotalPaise: number;
@@ -373,8 +441,14 @@ export interface AdminUser {
   name: string | null;
   email: string | null;
   mobile: string;
-  role: string;
+  role: 'superadmin' | 'operations' | 'support' | 'compliance' | 'content' | 'billing' | 'viewer';
   is_active: boolean;
+  /** Two-step sign-in set up; last sign-in; an invite nobody has used yet. */
+  mfa_enrolled?: boolean;
+  last_login_at?: string | null;
+  invite_pending?: boolean;
+  invite_expires_at?: string | null;
+  locked_until?: string | null;
   created_at: string;
 }
 

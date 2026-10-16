@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Compass, CopyCheck, FileText, Inbox, Landmark, LayoutDashboard, Library, LogOut, MessageSquareQuote, Package, Presentation, Settings as SettingsIcon, ShieldCheck, Sparkles, UserPlus, Users, Users2 } from 'lucide-react';
+import { Compass, CopyCheck, FileText, IndianRupee, Target, Inbox, Landmark, LayoutDashboard, Library, LogOut, Package, Settings as SettingsIcon, ShieldCheck, Sparkles, Users, Users2 } from 'lucide-react';
 import { api } from './api/client';
 import { useAuth } from './auth/AuthContext';
+import { useMe } from './auth/permissions';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevoteesPage } from './pages/DevoteesPage';
 import { LoginPage } from './pages/LoginPage';
@@ -14,15 +15,15 @@ import { ChangeRequestsPage } from './pages/ChangeRequestsPage';
 import { TemplateApprovalsPage } from './pages/TemplateApprovalsPage';
 import { SantContentPage } from './pages/SantContentPage';
 import { PlansPage } from './pages/PlansPage';
-import { RegistrationsPage } from './pages/RegistrationsPage';
-import { CustomRequestsPage } from './pages/CustomRequestsPage';
-import { DemoRequestsPage } from './pages/DemoRequestsPage';
 import { SectReadinessPage } from './pages/SectReadinessPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TenantDetailPage } from './pages/TenantDetailPage';
 import { TenantsPage } from './pages/TenantsPage';
+import { BillingPage } from './pages/BillingPage';
+import { EnquiriesPage } from './pages/EnquiriesPage';
+import { OfflineMandirDetailPage } from './pages/OfflineMandirDetailPage';
 
 /**
  * The sidebar, in four groups.
@@ -43,7 +44,7 @@ interface NavItem {
   icon: React.ReactNode;
   end?: boolean;
   /** A review queue: its badge counts what this endpoint returns. */
-  queue?: string;
+  queue?: string | string[];
 }
 
 const navGroups: { heading: string | null; items: NavItem[] }[] = [
@@ -56,6 +57,7 @@ const navGroups: { heading: string | null; items: NavItem[] }[] = [
   {
     heading: 'Directory',
     items: [
+      // Online, offline (JainERP Offline) and both, in one list (migration 094).
       { to: '/mandirs', label: 'Manage Mandir', icon: <Landmark size={18} /> },
       { to: '/devotees', label: 'Manage Devotees', icon: <Users size={18} /> },
       { to: '/maharaj', label: 'Sadhu-Sadhvi', icon: <Sparkles size={18} /> },
@@ -99,24 +101,26 @@ const navGroups: { heading: string | null; items: NavItem[] }[] = [
     // waiting on a decision, somebody is waiting on a call.
     heading: 'Enquiries',
     items: [
+      // Leads, registrations, custom-plan and demo requests: one job, one page
+      // with a tab each (pages/EnquiriesPage.tsx). The badge is everything
+      // waiting across them.
       {
-        to: '/registrations', label: 'Registrations', icon: <UserPlus size={18} />,
-        queue: '/admin/registrations?status=pending&limit=1',
+        to: '/leads', label: 'Leads & Enquiries', icon: <Target size={18} />,
+        queue: ['/admin/leads?due=overdue&limit=1', '/admin/registrations?status=pending&limit=1', '/admin/custom-requests?status=new', '/admin/demo-requests?status=new&limit=1'],
       },
-      {
-        to: '/custom-requests', label: 'Custom Requests', icon: <MessageSquareQuote size={18} />,
-        queue: '/admin/custom-requests?status=new',
-      },
-      {
-        to: '/demo-requests', label: 'Demo Requests', icon: <Presentation size={18} />,
-        queue: '/admin/demo-requests?status=new&limit=1',
-      },
+    ],
+  },
+  {
+    // Money in one place: receivables, renewals, and the price list.
+    heading: 'Revenue',
+    items: [
+      { to: '/billing', label: 'Billing', icon: <IndianRupee size={18} /> },
+      { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
     ],
   },
   {
     heading: 'Platform',
     items: [
-      { to: '/plans', label: 'Plans', icon: <Package size={18} /> },
       { to: '/sect-readiness', label: 'Sampradaya', icon: <Compass size={18} /> },
       // Platform content, like Sampradaya beside it - no temple owns the granth
       // catalogue, so no temple admin curates it.
@@ -126,8 +130,43 @@ const navGroups: { heading: string | null; items: NavItem[] }[] = [
   },
 ];
 
+/**
+ * Find a mandir from anywhere — the search box at the top of the sidebar, the
+ * way Stripe and Shopify admins put search first. Press "/" to jump to it.
+ * It opens Manage Mandir filtered by what was typed (name, slug, OFF-
+ * reference, city, contact or mobile).
+ */
+function QuickFind() {
+  const navigate = useNavigate();
+  const ref = useRef<HTMLInputElement>(null);
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      e.preventDefault();
+      ref.current?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  return (
+    <form className="quickfind" role="search" onSubmit={(e) => {
+      e.preventDefault();
+      const v = q.trim();
+      navigate(v ? `/mandirs?q=${encodeURIComponent(v)}&demo=all` : '/mandirs');
+      setQ('');
+      ref.current?.blur();
+    }}>
+      <input ref={ref} type="search" aria-label="Find a mandir" placeholder="Find a mandir…   /" value={q} onChange={(e) => setQ(e.target.value)} />
+    </form>
+  );
+}
+
 function Layout() {
   const { session, logout } = useAuth();
+  const me = useMe();
   const navigate = useNavigate();
   /**
    * How many items are waiting in each review queue, keyed by its route.
@@ -171,13 +210,16 @@ function Layout() {
     let live = true;
     const queues = navGroups.flatMap((g) => g.items).filter((i) => i.queue);
     void Promise.all(queues.map(async (item) => {
-      try {
-        const r = await api<unknown[]>(item.queue!);
-        const n = r.meta?.total ?? (Array.isArray(r.data) ? r.data.length : 0);
-        return [item.to, Number(n) || 0] as const;
-      } catch {
-        return [item.to, 0] as const;
-      }
+      const sources = Array.isArray(item.queue) ? item.queue : [item.queue!];
+      const ns = await Promise.all(sources.map(async (q) => {
+        try {
+          const r = await api<unknown[]>(q);
+          return Number(r.meta?.total ?? (Array.isArray(r.data) ? r.data.length : 0)) || 0;
+        } catch {
+          return 0;
+        }
+      }));
+      return [item.to, ns.reduce((a, b) => a + b, 0)] as const;
     })).then((pairs) => {
       if (live) setCounts(Object.fromEntries(pairs));
     });
@@ -191,11 +233,12 @@ function Layout() {
           Jain<em>ERP</em>
           <div className="brand-sub">Super Admin Console</div>
         </div>
+        <QuickFind />
         <nav>
           {navGroups.map((group, gi) => (
             <div key={group.heading ?? gi} className={gi ? 'mt-4' : ''}>
               {group.heading && (
-                <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                <p className="nav-heading">
                   {group.heading}
                 </p>
               )}
@@ -208,7 +251,7 @@ function Layout() {
                       empty queue looks empty from here and never needs opening. */}
                   {!!item.queue && (counts[item.to] ?? 0) > 0 && (
                     <span
-                      className="ml-auto flex-shrink-0 rounded-full bg-white/20 px-1.5 text-[10px] font-bold leading-4"
+                      className="nav-count"
                       title={`${counts[item.to]} waiting for action — clears when handled, not when viewed`}
                     >
                       {counts[item.to]}
@@ -220,7 +263,8 @@ function Layout() {
           ))}
         </nav>
         <div className="whoami">
-          <div className="name">{session?.user.name ?? session?.user.email}</div>
+          <div className="name">{me?.name ?? session?.user.name ?? session?.user.email}</div>
+          {me && <div className="role" data-testid="my-role">{me.role_label}</div>}
           <a
             href="#logout"
             className="inline-flex items-center gap-1.5 mt-1.5"
@@ -235,10 +279,19 @@ function Layout() {
         </div>
       </aside>
       <main className="main">
+        {/* A Viewer is told once, up front, rather than finding out button by button. */}
+        {me?.role === 'viewer' && (
+          <div className="notice" role="status" data-testid="viewer-banner" style={{ marginBottom: 16 }}>
+            <span>You have <b>view-only</b> access — you can see everything but change nothing. Ask a Super admin if you need more.</span>
+          </div>
+        )}
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/mandirs" element={<TenantsPage />} />
           <Route path="/mandirs/:id" element={<TenantDetailPage />} />
+          {/* Offline Mandirs is now a tab of Manage Mandir; old links still land. */}
+          <Route path="/offline-mandirs" element={<Navigate to="/mandirs?deployment=offline" replace />} />
+          <Route path="/offline-mandirs/:id" element={<OfflineMandirDetailPage />} />
           <Route path="/devotees" element={<DevoteesPage />} />
           <Route path="/maharaj" element={<MaharajPage />} />
           <Route path="/sanghs" element={<SanghsPage />} />
@@ -247,10 +300,13 @@ function Layout() {
           <Route path="/template-approvals" element={<TemplateApprovalsPage />} />
           <Route path="/sant-content" element={<SantContentPage />} />
           <Route path="/donation-accounts" element={<DonationAccountsPage />} />
-          <Route path="/registrations" element={<RegistrationsPage />} />
-          <Route path="/custom-requests" element={<CustomRequestsPage />} />
-          <Route path="/demo-requests" element={<DemoRequestsPage />} />
+          {/* One page now (Leads & Enquiries); the old addresses land on their tab. */}
+          <Route path="/registrations" element={<Navigate to="/leads?tab=registrations" replace />} />
+          <Route path="/custom-requests" element={<Navigate to="/leads?tab=custom" replace />} />
+          <Route path="/demo-requests" element={<Navigate to="/leads?tab=demo" replace />} />
           <Route path="/plans" element={<PlansPage />} />
+          <Route path="/billing" element={<BillingPage />} />
+          <Route path="/leads" element={<EnquiriesPage />} />
           <Route path="/sect-readiness" element={<SectReadinessPage />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/settings" element={<SettingsPage />} />

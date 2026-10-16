@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiRequestError } from '../api/client';
+import { draftKeyFor, dropDraft, readDraft, restore, snapshot, writeDraft } from './formAutoDraft';
 
 export function Badge({ value }: { value: string | boolean }) {
   const v = typeof value === 'boolean' ? (value ? 'verified' : 'unverified') : value;
@@ -32,8 +33,11 @@ export function Modal({
   confirmDiscard?: boolean;
 }) {
   const dirty = useRef(false);
+  const box = useRef<HTMLDivElement>(null);
   const requestClose = useCallback(() => {
-    if (confirmDiscard && dirty.current && !window.confirm('Close this form? What you have entered will be lost.')) return;
+    // A form that keeps a draft loses nothing by closing — no need to ask.
+    const drafted = !!box.current?.querySelector('form[data-draft="on"]');
+    if (confirmDiscard && dirty.current && !drafted && !window.confirm('Close this form? What you have entered will be lost.')) return;
     onClose();
   }, [confirmDiscard, onClose]);
 
@@ -46,6 +50,7 @@ export function Modal({
   return (
     <div className="modal-overlay">
       <div
+        ref={box}
         className={`modal${wide ? ' modal-wide' : ''}`}
         role="dialog"
         aria-modal="true"
@@ -89,8 +94,11 @@ export function SuccessBox({ message }: { message: string | null }) {
 
 export function ErrorBox({ error }: { error: unknown }) {
   if (!error) return null;
+  // A role refusal is a sentence for a person, not a code for a developer.
   const msg =
-    error instanceof ApiRequestError
+    error instanceof ApiRequestError && /^FORBIDDEN_(PERMISSION|ROLE)$/.test(error.error.code)
+      ? error.error.message
+      : error instanceof ApiRequestError
       ? `${error.error.code}: ${error.error.message}`
       : error instanceof Error
         ? error.message
@@ -114,6 +122,7 @@ export function ActionForm({
   onDone,
   successMessage = 'Saved.',
   secondary,
+  draft,
 }: {
   onSubmit: () => Promise<void>;
   submitLabel: string;
@@ -122,11 +131,73 @@ export function ActionForm({
   successMessage?: string | null;
   /** Extra buttons beside the submit (a Cancel, a Start over). */
   secondary?: ReactNode;
+  /**
+   * Drafts (components/formAutoDraft.ts) are ON for every form: what is typed
+   * survives closing, and comes back with a "Discard draft". `false` for a
+   * form that keeps its own draft (useFormDraft) or must never keep one.
+   */
+  draft?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [ok, setOk] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const draftKey = useRef<string | null>(null);
+  const baseline = useRef<string>('');
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // Drafts: take the starting values, bring back a kept draft, then keep every change.
+  useEffect(() => {
+    if (draft === false || !formRef.current) return;
+    const form = formRef.current;
+    // Tracking starts at once, so even the quickest typing is kept.
+    draftKey.current = draftKeyFor(form, submitLabel);
+    baseline.current = JSON.stringify(snapshot(form));
+    let typed = false;
+    // Bringing a draft back waits a beat — some forms fill their selects from
+    // the API first — and never overwrites what has been typed meanwhile.
+    const start = setTimeout(() => {
+      if (typed || !draftKey.current) return;
+      baseline.current = JSON.stringify(snapshot(form));
+      const kept = readDraft(draftKey.current);
+      if (kept && JSON.stringify(kept.v) !== baseline.current) {
+        restore(form, kept.v);
+        setRestoredAt(kept.savedAt);
+      }
+    }, 250);
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const onChange = (e: Event) => {
+      if (e.isTrusted) typed = true;
+      if (!draftKey.current) return;
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        const now = snapshot(form);
+        if (JSON.stringify(now) === baseline.current) { dropDraft(draftKey.current!); setSavedAt(null); return; }
+        writeDraft(draftKey.current!, now);
+        setSavedAt(Date.now());
+      }, 400);
+    };
+    form.addEventListener('input', onChange, true);
+    form.addEventListener('change', onChange, true);
+    return () => {
+      clearTimeout(start);
+      if (t) clearTimeout(t);
+      form.removeEventListener('input', onChange, true);
+      form.removeEventListener('change', onChange, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const discardDraft = () => {
+    if (!formRef.current || !draftKey.current) return;
+    if (!window.confirm('Discard this draft and go back to how the form started?')) return;
+    dropDraft(draftKey.current);
+    restore(formRef.current, JSON.parse(baseline.current));
+    setRestoredAt(null);
+    setSavedAt(null);
+  };
+  const hhmm = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
   // The banner clears itself, but a form unmounted by its own onDone (dialog
   // closes, row navigates away) would leave the timer to fire on a dead
@@ -140,6 +211,13 @@ export function ActionForm({
     setOk(null);
     try {
       await onSubmit();
+      // Saved: the draft has done its job.
+      if (draftKey.current) {
+        dropDraft(draftKey.current);
+        if (formRef.current) baseline.current = JSON.stringify(snapshot(formRef.current));
+        setSavedAt(null);
+        setRestoredAt(null);
+      }
       if (successMessage) {
         setOk(successMessage);
         if (timer.current) clearTimeout(timer.current);
@@ -154,12 +232,22 @@ export function ActionForm({
   }
 
   return (
-    <form onSubmit={handle}>
+    <form onSubmit={handle} ref={formRef} data-draft={draft === false ? undefined : 'on'}>
+      {restoredAt && (
+        <div className="draft-note" data-testid="draft-restored">
+          <span>Picked up your draft from {hhmm(restoredAt)}.</span>
+          <button type="button" className="btn sm" onClick={discardDraft}>Discard draft</button>
+        </div>
+      )}
       <ErrorBox error={error} />
       <SuccessBox message={ok} />
       {children}
       <div className="actions">
-        {secondary}
+        {secondary ?? (draft !== false && (
+          <span className="muted" data-testid="draft-status" style={{ fontSize: 12, marginRight: 'auto', alignSelf: 'center' }}>
+            {savedAt ? `Draft saved ${hhmm(savedAt)} — kept if you close` : ''}
+          </span>
+        ))}
         <button className="btn primary" type="submit" disabled={busy}>
           {busy ? 'Working…' : submitLabel}
         </button>

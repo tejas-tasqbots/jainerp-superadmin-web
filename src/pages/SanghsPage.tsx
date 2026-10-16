@@ -1,3 +1,6 @@
+import { Plus } from 'lucide-react';
+import { useCan } from '../auth/permissions';
+import { PageHeader } from '../components/PageHeader';
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate } from '../api/client';
 import type { Sangh, SanghHead } from '../api/types';
@@ -13,6 +16,7 @@ import { ActionForm, Badge, ErrorBox, Modal, useToast } from '../components/ui';
  * are — this page owns the sangh, not the roster.
  */
 export function SanghsPage() {
+  const canCurate = useCan('content.manage');
   const [rows, setRows] = useState<Sangh[]>([]);
   const [q, setQ] = useState('');
   const [verifiedFilter, setVerifiedFilter] = useState('');
@@ -45,7 +49,11 @@ export function SanghsPage() {
   return (
     <div>
       {toast.node}
-      <h1>Sanghs</h1>
+      <PageHeader
+        title="Sanghs"
+        subtitle="Groups of ascetics travelling together, with their heads. Members are set from Sadhu-Sadhvi."
+        actions={canCurate && <button className="btn primary" data-testid="add-sangh" onClick={() => setShowCreate(true)}><Plus size={15} /> Add sangh</button>}
+      />
       <ErrorBox error={error} />
 
       {unverified > 0 && (
@@ -73,7 +81,7 @@ export function SanghsPage() {
           <option value="true">Verified</option>
         </select>
         <div className="grow" />
-        <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add sangh</button>
+
       </div>
 
       <table className="data">

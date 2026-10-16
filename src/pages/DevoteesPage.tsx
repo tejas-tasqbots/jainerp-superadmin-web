@@ -1,3 +1,6 @@
+import { Plus } from 'lucide-react';
+import { useCan } from '../auth/permissions';
+import { PageHeader } from '../components/PageHeader';
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, type ApiMeta } from '../api/client';
 import { PhoneInput } from '../components/PhoneInput';
@@ -6,6 +9,7 @@ import type { Devotee } from '../api/types';
 import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
 
 export function DevoteesPage() {
+  const canEdit = useCan('devotees.manage');
   const [rows, setRows] = useState<Devotee[]>([]);
   const [meta, setMeta] = useState<ApiMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -32,17 +36,19 @@ export function DevoteesPage() {
 
   return (
     <div>
-      <h1>Manage Devotees</h1>
+      <PageHeader
+        title="Manage Devotees"
+        subtitle="Every devotee account on the platform, across all mandirs."
+        actions={canEdit && <button className="btn primary" data-testid="add-devotee" onClick={() => setShowCreate(true)}><Plus size={15} /> Add devotee</button>}
+      />
       <ErrorBox error={error} />
-      <div className="toolbar">
-        <input placeholder="Search name / mobile / email…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
-        <select value={verifiedFilter} onChange={(e) => { setVerifiedFilter(e.target.value); setPage(1); }}>
-          <option value="">All</option>
+      <div className="filter-bar">
+        <input type="search" aria-label="Search" placeholder="Search name, mobile or email…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+        <select aria-label="Verified" value={verifiedFilter} onChange={(e) => { setVerifiedFilter(e.target.value); setPage(1); }}>
+          <option value="">Verified or not</option>
           <option value="true">Verified</option>
           <option value="false">Not verified</option>
         </select>
-        <div className="grow" />
-        <button className="btn primary" onClick={() => setShowCreate(true)}>+ Add Devotee</button>
       </div>
 
       <table className="data">

@@ -1,449 +1,289 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { api, formatPaise, type ApiMeta } from '../api/client';
-import type { TenantRow } from '../api/types';
-import { ActionForm, Badge, ErrorBox, Modal, Pagination } from '../components/ui';
-import { ModulePicker } from '../components/ModulePicker';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { FileClock, Plus, Trash2 } from 'lucide-react';
+import { api, formatDate, formatPaise, type ApiMeta } from '../api/client';
+import type { DirectoryRow, OnboardingDraftRow } from '../api/types';
+import { ErrorBox, Modal, Pagination, useToast } from '../components/ui';
+import { EmptyRow, PageHeader } from '../components/PageHeader';
+import { OnboardingWizard, hasOnboardingDraft } from '../components/OnboardingWizard';
+import { LicenceBadge } from '../components/OfflineMandirFields';
+import { useCan } from '../auth/permissions';
 
-const PLANS = ['starter', 'standard', 'premium', 'enterprise'];
-const TIERS = ['pooled', 'dedicated'];
+/**
+ * Manage Mandir — every mandir in one list, however it runs JainERP: online
+ * (cloud), offline (JainERP Offline only) or both (migration 094,
+ * GET /admin/mandir-directory). Offline Mandirs used to be a separate page
+ * with its own list and its own onboarding; it is folded in here.
+ *
+ * Filters live in the URL (?deployment=offline&view=attention…), so a view
+ * can be bookmarked, shared, and survives the back button — the standard for
+ * admin lists. Customers only by default; demo mandirs are a filter away.
+ */
 
-export function TenantsPage() {
-  const [rows, setRows] = useState<TenantRow[]>([]);
-  const [meta, setMeta] = useState<ApiMeta | null>(null);
-  const [page, setPage] = useState(1);
-  const [q, setQ] = useState('');
-  const [status, setStatus] = useState('');
-  const [plan, setPlan] = useState('');
-  /** '' = live temples · visible/hidden = devotee directory · inactive · deleted */
-  const [access, setAccess] = useState('');
-  const [error, setError] = useState<unknown>(null);
-  const [showCreate, setShowCreate] = useState(false);
+const PAGE = 25;
+const DEPLOY_TABS: Array<[string, string]> = [['', 'All'], ['online', 'Online'], ['offline', 'Offline'], ['both', 'Online + Offline']];
+const VIEWS: Array<[string, string]> = [
+  ['all', 'All mandirs'], ['live', 'Live — usable today'], ['attention', 'Needs attention'],
+  ['blocked', 'Blocked / paused'], ['deleted', 'Deleted (recycle bin)'],
+];
+const FILTER_KEYS = ['q', 'deployment', 'view', 'plan', 'licence', 'demo', 'devotee', 'custom_plan', 'dues', 'sort'] as const;
 
-  /**
-   * Every filter change fires a fresh request while earlier ones may still be
-   * in flight. Without a sequence guard a slower *older* response can land last
-   * and overwrite the filtered rows — the table then shows live mandirs while
-   * the dropdown says "Deleted". Only the newest request is allowed to write.
-   */
-  const reqSeq = useRef(0);
+export function DeploymentPill({ value }: { value: string }) {
+  const label = value === 'both' ? 'Online + Offline' : value[0].toUpperCase() + value.slice(1);
+  return <span className={`dep ${value}`}>{label}</span>;
+}
 
-  const load = useCallback(() => {
-    const params = new URLSearchParams({ page: String(page), limit: '25' });
-    if (q) params.set('q', q);
-    if (status) params.set('status', status);
-    if (plan) params.set('plan', plan);
-    if (access === 'visible') params.set('devotee_visible', 'true');
-    if (access === 'hidden') params.set('devotee_visible', 'false');
-    if (access === 'inactive') params.set('is_active', 'false');
-    if (access === 'deleted') params.set('deleted_only', 'true');
-    if (access === 'custom_plan') params.set('custom_plan_only', 'true');
-    const seq = ++reqSeq.current;
-    api<TenantRow[]>(`/admin/tenants?${params}`)
-      .then((r) => {
-        if (seq !== reqSeq.current) return; // superseded
-        setRows(r.data);
-        setMeta(r.meta);
-      })
-      .catch((e) => {
-        if (seq === reqSeq.current) setError(e);
-      });
-  }, [page, q, status, plan, access]);
-
-  useEffect(load, [load]);
-
+function StatusCell({ r }: { r: DirectoryRow }) {
+  if (r.is_deleted) return <span className="badge">deleted</span>;
+  if (r.source === 'offline') {
+    return r.status === 'active' ? <span className="badge green">active</span> : <span className="badge">{r.status}</span>;
+  }
+  if (r.access_enabled) return <span className="badge green">active</span>;
   return (
-    <div>
-      <h1>Manage Mandir</h1>
-      <ErrorBox error={error} />
-      <div className="toolbar">
-        <input placeholder="Search name or slug…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
-        <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-          <option value="">All statuses</option>
-          {['active', 'suspended', 'provisioning', 'cancelled'].map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <select value={plan} onChange={(e) => { setPlan(e.target.value); setPage(1); }}>
-          <option value="">All plans</option>
-          {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select
-          name="access"
-          value={access}
-          onChange={(e) => { setAccess(e.target.value); setPage(1); }}
-          title="Visibility & access filters"
-        >
-          <option value="">Live mandirs</option>
-          <option value="visible">Visible to devotees</option>
-          <option value="hidden">Hidden from devotees</option>
-          <option value="inactive">Deactivated (cannot log in)</option>
-          <option value="deleted">Deleted (recycle bin)</option>
-          <option value="custom_plan">On a custom plan</option>
-        </select>
-        <div className="grow" />
-        <button className="btn primary" data-testid="onboard-btn" onClick={() => setShowCreate(true)}>
-          {hasOnboardingDraft() ? 'Continue onboarding…' : '+ Onboard Mandir'}
-        </button>
-      </div>
-
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Login access</th>
-            <th>Devotee app</th>
-            <th>Plan</th>
-            <th>Tier</th>
-            <th>Global sync</th>
-            <th>Pending dues</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((t) => (
-            <tr key={t.id}>
-              <td>
-                <Link to={`/mandirs/${t.id}`}>{t.name}</Link>
-                <div className="muted mono">{t.slug}</div>
-              </td>
-              <td><Badge value={t.is_deleted ? 'deleted' : t.status} /></td>
-              <td data-testid={`access-${t.slug}`}>
-                {t.access_enabled ? (
-                  <span className="badge green">allowed</span>
-                ) : (
-                  <span className="badge red" title={t.access_block_reason ?? undefined}>
-                    blocked{t.access_block_reason ? ` · ${t.access_block_reason.replace(/_/g, ' ')}` : ''}
-                  </span>
-                )}
-              </td>
-              <td data-testid={`visible-${t.slug}`}>
-                {t.devotee_visible
-                  ? (t.access_enabled ? <span className="badge green">listed</span> : <span className="badge">on, but blocked</span>)
-                  : <span className="badge">hidden</span>}
-              </td>
-              <td>
-                {t.plan}
-                {t.is_custom_plan && <div className="muted" style={{ fontSize: 11 }}>custom pricing</div>}
-              </td>
-              <td>{t.tenancy_tier.replace(/_/g, ' ')}</td>
-              <td>{t.global_sync_enabled ? 'on' : 'off'}</td>
-              <td>{t.pending_amount_paise ? formatPaise(t.pending_amount_paise) : '—'}</td>
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr><td colSpan={8} className="muted">No mandirs found.</td></tr>
-          )}
-        </tbody>
-      </table>
-      {meta && <Pagination page={page} total={meta.total} limit={25} onPage={setPage} />}
-
-      {showCreate && <CreateTenantModal onClose={() => setShowCreate(false)} onCreated={load} />}
-    </div>
+    <span className="badge red" title={r.access_block_reason ?? undefined}>
+      {r.status !== 'active' ? r.status : 'blocked'}{r.access_block_reason ? ` · ${r.access_block_reason.replace(/_/g, ' ')}` : ''}
+    </span>
   );
 }
 
-const TEMPLE_TYPES = ['jain', 'hindu', 'sikh', 'buddhist', 'gurudwara', 'church'];
+export function TenantsPage() {
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const get = (k: string) => params.get(k) ?? '';
+  const page = Math.max(1, Number(params.get('page')) || 1);
 
-/**
- * What a new mandir starts with when the operator does not touch the Modules
- * section — everything optional, i.e. the behaviour before entitlements existed.
- * The server applies the same default when `modules` is omitted entirely; this
- * only pre-ticks the boxes so the choice is visible rather than implicit.
- */
-const FULL_MANDIR_DEFAULT = [
-  'dharamshala', 'bhojanshala', 'prasad', 'seva', 'events', 'bolis', 'annadaan',
-  'compliance', 'certificates', 'creditors', 'fixed_assets', 'sant', 'frontdesk',
-];
-/** Send only filled-in optional fields so the API keeps them null otherwise. */
-function pick<T extends Record<string, unknown>>(obj: T): Partial<T> {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== '' && v != null)) as Partial<T>;
-}
-
-const EMPTY_ONBOARDING = {
-  // mandir
-  name: '', temple_type: 'jain', plan: 'standard', billing_cycle: 'monthly', tenancy_tier: 'pooled',
-  // admin (signs into devmandir.com)
-  admin_name: '', admin_mobile: '', admin_email: '',
-  // address
-  line1: '', line2: '', state: '', city: '', pincode: '',
-  // public mandir contact (receipts + directory)
-  mandir_mobile: '', mandir_email: '', website: '',
-  // legal / tax
-  gstin: '', pan: '', tan: '', reg_80g_number: '', reg_12a_number: '', reg_12ab_number: '',
-  registration_number: '', darpan_number: '',
-  // bank / UPI
-  upi_id: '', bank_account_name: '', bank_account_no: '', bank_ifsc: '', bank_name: '',
-  // sampradaya (migration 032) — only meaningful for a Jain trust
-  sect: '', sub_sect: '',
-  // directory listing
-  global_sync_enabled: false,
-  devotee_visible: true,
-};
-type OnboardingForm = typeof EMPTY_ONBOARDING;
-
-/**
- * The half-filled onboarding form, kept for this browser tab.
- *
- * A form of ~35 fields used to live only in the dialog's state, so closing it
- * — on purpose or by a stray click — threw every field away (reported
- * 2026-09-29). sessionStorage, not localStorage: it survives a reload and a
- * closed dialog, but not the tab, so a trust's bank account number is not left
- * sitting in the browser after the operator is done.
- */
-const DRAFT_KEY = 'superadmin.onboarding-draft.v1';
-interface OnboardingDraft { form: OnboardingForm; modules: string[]; savedAt: number }
-
-function readDraft(): OnboardingDraft | null {
-  try {
-    const raw = sessionStorage.getItem(DRAFT_KEY);
-    return raw ? (JSON.parse(raw) as OnboardingDraft) : null;
-  } catch {
-    return null;
-  }
-}
-function writeDraft(d: OnboardingDraft | null) {
-  try {
-    if (d) sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
-    else sessionStorage.removeItem(DRAFT_KEY);
-  } catch { /* storage blocked — the form still works, it just is not kept */ }
-}
-export function hasOnboardingDraft(): boolean {
-  return readDraft() !== null;
-}
-
-function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [restored] = useState(readDraft);
-  const [form, setForm] = useState<OnboardingForm>(() => ({ ...EMPTY_ONBOARDING, ...(restored?.form ?? {}) }));
-  // Which optional modules this trust starts with (migration 031). Defaults to
-  // the Full Mandir preset, so an operator who ignores this section onboards
-  // exactly what they always did.
-  const [modules, setModules] = useState<string[]>(restored?.modules ?? FULL_MANDIR_DEFAULT);
-  const [showRestored, setShowRestored] = useState(!!restored);
-  const set = (k: keyof OnboardingForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setForm({ ...form, [k]: e.target.value });
-
-  // Keep the draft in step with every keystroke; an untouched form is not a draft.
-  const created = useRef(false);
-  useEffect(() => {
-    if (created.current) return;
-    const untouched = JSON.stringify(form) === JSON.stringify(EMPTY_ONBOARDING)
-      && JSON.stringify(modules) === JSON.stringify(FULL_MANDIR_DEFAULT);
-    writeDraft(untouched ? null : { form, modules, savedAt: Date.now() });
-  }, [form, modules]);
-
-  function startOver() {
-    if (!window.confirm('Clear every field and start this onboarding again?')) return;
-    writeDraft(null);
-    setForm(EMPTY_ONBOARDING);
-    setModules(FULL_MANDIR_DEFAULT);
-    setShowRestored(false);
-  }
+  const [rows, setRows] = useState<DirectoryRow[]>([]);
+  const [meta, setMeta] = useState<(ApiMeta & { counts?: Record<string, number> }) | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState(get('q'));
+  const [plans, setPlans] = useState<Array<{ name: string; display_name: string }>>([]);
+  const [drafts, setDrafts] = useState<OnboardingDraftRow[]>([]);
+  const [wizard, setWizard] = useState<{ draftId: string | null } | null>(null);
+  const [showDrafts, setShowDrafts] = useState(false);
+  const toast = useToast();
+  const canOnboard = useCan('mandirs.onboard');
 
   /**
-   * Switching away from a Jain trust clears the sampradaya.
-   *
-   * The Sampradaya section only renders for `temple_type === 'jain'`, but
-   * hiding it left the values in state and `pick()` still posted them — so an
-   * operator who chose a sect and then changed the temple type silently sent a
-   * Jain sampradaya for a Hindu trust. The API refuses that now; clearing here
-   * means they never see the error in the first place.
+   * Change filters; any change except paging goes back to page 1. Applied to
+   * the LIVE address bar, never a copy captured earlier: the debounced search
+   * fires 300 ms late and used to wipe a filter chosen in between. (React
+   * Router 6's functional setSearchParams is no help — its "prev" is the copy
+   * from the render that created the callback.)
    */
-  const setTempleType = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const temple_type = e.target.value;
-    setForm({ ...form, temple_type, ...(temple_type === 'jain' ? {} : { sect: '', sub_sect: '' }) });
+  const update = (patch: Record<string, string>) => {
+    const next = new URLSearchParams(window.location.search);
+    for (const [k, v] of Object.entries(patch)) { if (v) next.set(k, v); else next.delete(k); }
+    if (!('page' in patch)) next.delete('page');
+    setParams(next, { replace: true });
   };
 
-  // States + cities from the bundled India geo lookup.
-  const [states, setStates] = useState<string[]>([]);
-  const [cities, setCities] = useState<string[]>([]);
-  useEffect(() => {
-    api<string[]>('/admin/geo/states').then((r) => setStates(r.data)).catch(() => setStates([]));
+  // Newest request wins: a slower older response must not overwrite the rows.
+  const seq = useRef(0);
+  const load = useCallback(() => {
+    const qs = new URLSearchParams({ page: String(page), limit: String(PAGE) });
+    for (const k of FILTER_KEYS) { const v = params.get(k); if (v) qs.set(k, v); }
+    const n = ++seq.current;
+    setLoading(true);
+    api<DirectoryRow[]>(`/admin/mandir-directory?${qs}`)
+      .then((r) => { if (n === seq.current) { setRows(r.data); setMeta(r.meta as typeof meta); setError(null); } })
+      .catch((e) => { if (n === seq.current) setError(e); })
+      .finally(() => { if (n === seq.current) setLoading(false); });
+  }, [params, page]);
+  useEffect(load, [load]);
+
+  const loadDrafts = useCallback(() => {
+    api<OnboardingDraftRow[]>('/admin/onboarding-drafts').then((r) => setDrafts(r.data)).catch(() => setDrafts([]));
   }, []);
+  useEffect(loadDrafts, [loadDrafts]);
   useEffect(() => {
-    if (!form.state) { setCities([]); return; }
-    api<string[]>(`/admin/geo/states/${encodeURIComponent(form.state)}/cities`)
-      .then((r) => setCities(r.data))
-      .catch(() => setCities([]));
-  }, [form.state]);
+    api<Array<{ name: string; display_name: string; is_active: boolean }>>('/admin/plans')
+      .then((r) => setPlans(r.data.filter((p) => p.is_active))).catch(() => setPlans([]));
+  }, []);
+  // Debounced search into the URL.
+  useEffect(() => {
+    const t = setTimeout(() => { if (search.trim() !== get('q')) update({ q: search.trim() }); }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  const counts = meta?.counts ?? {};
+  const activeFilters = FILTER_KEYS.filter((k) => k !== 'deployment' && k !== 'sort' && k !== 'q' && params.get(k)).length + (get('q') ? 1 : 0);
+  const open = (r: DirectoryRow) => navigate(r.source === 'offline' ? `/offline-mandirs/${r.id}` : `/mandirs/${r.id}`);
+
+  async function deleteDraft(d: OnboardingDraftRow) {
+    if (!window.confirm(`Delete the draft "${d.title || 'Untitled'}"? This cannot be undone.`)) return;
+    try {
+      await api(`/admin/onboarding-drafts/${d.id}`, { method: 'DELETE' });
+      loadDrafts();
+      toast.show('Draft deleted.');
+    } catch (e) { toast.show(String((e as Error).message), 'bad'); }
+  }
 
   return (
-    // The draft is the safety net, so closing needs no "are you sure".
-    <Modal title="Onboard new mandir" onClose={onClose} wide confirmDiscard={false}>
-      {showRestored && restored && (
-        <div className="draft-note" data-testid="onboarding-draft-restored">
-          <span>Picked up where you left off — draft from {new Date(restored.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.</span>
-          <button type="button" className="btn sm" onClick={startOver}>Start over</button>
-        </div>
-      )}
-      <ActionForm
-        submitLabel="Create mandir"
-        successMessage={null}
-        onDone={() => { created.current = true; writeDraft(null); onCreated(); onClose(); }}
-        secondary={
+    <div>
+      <PageHeader
+        title="Manage Mandir"
+        subtitle="Every mandir on JainERP — online, offline and both. Open one to manage its plan, users, billing or licence."
+        actions={canOnboard &&
           <>
-            <span className="muted" style={{ fontSize: 12, marginRight: 'auto', alignSelf: 'center' }}>
-              Your entries are kept if you close this — reopen to continue.
-            </span>
-            <button type="button" className="btn" onClick={onClose}>Close</button>
+            <button className="btn" onClick={() => setShowDrafts(true)} data-testid="drafts-btn">
+              <FileClock size={15} /> Drafts{drafts.length ? ` (${drafts.length})` : ''}
+            </button>
+            <button className="btn primary" data-testid="onboard-btn" onClick={() => setWizard({ draftId: null })}>
+              {hasOnboardingDraft() ? 'Continue onboarding…' : <><Plus size={15} /> Onboard Mandir</>}
+            </button>
           </>
         }
-        onSubmit={async () => {
-          await api('/admin/tenants', {
-            method: 'POST',
-            body: {
-              name: form.name,
-              temple_type: form.temple_type,
-              plan: form.plan,
-              billing_cycle: form.billing_cycle,
-              tenancy_tier: form.tenancy_tier,
-              admin_contact: pick({ name: form.admin_name, mobile: form.admin_mobile, email: form.admin_email }),
-              address: pick({ line1: form.line1, line2: form.line2, state: form.state, city: form.city, pincode: form.pincode }),
-              global_sync_enabled: form.global_sync_enabled,
-              devotee_visible: form.devotee_visible,
-              modules,
-              ...pick({ sect: form.sect, sub_sect: form.sub_sect }),
-              ...pick({
-                mandir_mobile: form.mandir_mobile, mandir_email: form.mandir_email, website: form.website,
-                gstin: form.gstin, pan: form.pan, tan: form.tan,
-                reg_80g_number: form.reg_80g_number, reg_12a_number: form.reg_12a_number, reg_12ab_number: form.reg_12ab_number,
-                registration_number: form.registration_number, darpan_number: form.darpan_number,
-                upi_id: form.upi_id, bank_account_name: form.bank_account_name, bank_account_no: form.bank_account_no,
-                bank_ifsc: form.bank_ifsc, bank_name: form.bank_name,
-              }),
-            },
-          });
-        }}
-      >
-        <h4 className="form-section">Mandir & plan</h4>
-        <div className="form-grid">
-          <label className="field span-2"><span>Mandir name *</span><input name="name" value={form.name} onChange={set('name')} required /></label>
-          <label className="field"><span>Temple type</span>
-            <select name="temple_type" value={form.temple_type} onChange={setTempleType}>{TEMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
-          </label>
-          <label className="field"><span>Plan</span>
-            <select name="plan" value={form.plan} onChange={set('plan')}>{PLANS.map((p) => <option key={p}>{p}</option>)}</select>
-          </label>
-          <label className="field"><span>Billing cycle</span>
-            <select name="billing_cycle" value={form.billing_cycle} onChange={set('billing_cycle')}>
-              <option value="monthly">monthly</option>
-              <option value="yearly">yearly</option>
-            </select>
-          </label>
-          <label className="field"><span>Tenancy tier (big mandir → dedicated database)</span>
-            <select name="tenancy_tier" value={form.tenancy_tier} onChange={set('tenancy_tier')}>
-              {TIERS.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-            </select>
-          </label>
-        </div>
+      />
+      <ErrorBox error={error} />
 
-        {form.temple_type === 'jain' && (
-          <>
-            <h4 className="form-section">Sampradaya</h4>
-            <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
-              Leave blank if unsure — blank keeps the trust visible to every devotee.
-              A wrong value hides it from exactly the devotees it serves, so a guess
-              is worse than nothing.
-            </p>
-            <div className="form-grid">
-              <label className="field"><span>Sect</span>
-                <select name="sect" value={form.sect} onChange={set('sect')}>
-                  <option value="">Not recorded</option>
-                  <option value="digambar">Digambar</option>
-                  <option value="shwetambar">Shwetambar</option>
-                </select>
-              </label>
-              <label className="field"><span>Panth / Gaccha (optional)</span>
-                <input name="sub_sect" value={form.sub_sect} onChange={set('sub_sect')} placeholder="Terapanth, Bisapanth, Murtipujak…" />
-              </label>
-            </div>
-          </>
+      <div className="seg" role="tablist" aria-label="Deployment">
+        {DEPLOY_TABS.map(([value, label]) => (
+          <button key={value || 'all'} role="tab" aria-selected={get('deployment') === value}
+            className={get('deployment') === value ? 'active' : ''} onClick={() => update({ deployment: value })}>
+            {label}<span className="count">{counts[value || 'all'] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="filter-bar">
+        <input type="search" aria-label="Search" placeholder="Search name, slug, OFF- reference, city, contact or mobile…"
+          value={search} onChange={(e) => setSearch(e.target.value)} />
+        <select aria-label="View" value={get('view') || 'all'} onChange={(e) => update({ view: e.target.value === 'all' ? '' : e.target.value })}>
+          {VIEWS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <select aria-label="Plan" value={get('plan')} onChange={(e) => update({ plan: e.target.value })}>
+          <option value="">Any plan</option>
+          {plans.map((p) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
+        </select>
+        <select aria-label="Licence" value={get('licence')} onChange={(e) => update({ licence: e.target.value })}>
+          <option value="">Any licence</option>
+          <option value="active">Licence active</option><option value="expiring">Ends within 30 days</option>
+          <option value="grace">In grace period</option><option value="expired">Expired</option><option value="none">No licence</option>
+        </select>
+        <select aria-label="More" value={get('dues') ? 'dues' : get('custom_plan') ? 'custom' : get('devotee') ? `dev-${get('devotee')}` : ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            update({ dues: v === 'dues' ? 'true' : '', custom_plan: v === 'custom' ? 'true' : '', devotee: v.startsWith('dev-') ? v.slice(4) : '' });
+          }}>
+          <option value="">More filters</option>
+          <option value="dues">Money owed</option>
+          <option value="custom">On a custom plan</option>
+          <option value="dev-visible">Listed in devotee app</option>
+          <option value="dev-hidden">Hidden from devotee app</option>
+        </select>
+        <select aria-label="Customers or demo" value={get('demo') || 'customers'} onChange={(e) => update({ demo: e.target.value === 'customers' ? '' : e.target.value })}>
+          <option value="customers">Customers</option><option value="demo">Demo / test only</option><option value="all">Customers + demo</option>
+        </select>
+        <div className="grow" />
+        <select aria-label="Sort" value={get('sort') || 'newest'} onChange={(e) => update({ sort: e.target.value === 'newest' ? '' : e.target.value })}>
+          <option value="newest">Newest first</option><option value="oldest">Oldest first</option>
+          <option value="name">Name A–Z</option><option value="dues">Most owed</option>
+        </select>
+        {activeFilters > 0 && (
+          <button type="button" className="clear" onClick={() => { setSearch(''); setParams(get('deployment') ? { deployment: get('deployment') } : {}, { replace: true }); }}>
+            Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
+          </button>
         )}
+      </div>
 
-        <h4 className="form-section">Admin contact</h4>
-        <div className="form-grid">
-          <label className="field"><span>Admin name *</span><input name="admin_name" value={form.admin_name} onChange={set('admin_name')} required /></label>
-          <label className="field"><span>Admin mobile (10-digit) *</span>
-            <input name="admin_mobile" value={form.admin_mobile} onChange={set('admin_mobile')} inputMode="numeric" maxLength={10} placeholder="9876543210" required />
-          </label>
-          <label className="field span-2"><span>Admin email</span><input name="admin_email" type="email" value={form.admin_email} onChange={set('admin_email')} /></label>
-        </div>
+      <div className="result-line">
+        <span>{loading ? 'Loading…' : `${meta?.total ?? 0} mandir${meta?.total === 1 ? '' : 's'}`}{get('demo') === 'demo' ? ' (demo / test)' : ''}</span>
+      </div>
 
-        <h4 className="form-section">Address</h4>
-        <div className="form-grid">
-          <label className="field"><span>Address line 1</span><input name="line1" value={form.line1} onChange={set('line1')} /></label>
-          <label className="field"><span>Address line 2</span><input name="line2" value={form.line2} onChange={set('line2')} /></label>
-          <label className="field"><span>State</span>
-            <select name="state" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, city: '' })}>
-              <option value="">Select state…</option>
-              {states.map((s) => <option key={s}>{s}</option>)}
-            </select>
-          </label>
-          <label className="field"><span>City</span>
-            <select name="city" value={form.city} autoComplete="off" disabled={!form.state} onChange={set('city')}>
-              <option value="">{form.state ? 'Select city…' : 'Pick a state first'}</option>
-              {(form.city && !cities.includes(form.city) ? [form.city, ...cities] : cities).map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </label>
-          <label className="field"><span>Pincode</span><input name="pincode" value={form.pincode} onChange={set('pincode')} inputMode="numeric" maxLength={6} placeholder="411001" /></label>
-        </div>
+      <div className="table-wrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Mandir</th>
+              <th>Runs on</th>
+              <th>Status</th>
+              <th>Plan / licence</th>
+              <th>Location</th>
+              <th className="num">Owed</th>
+              <th>Since</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.source}-${r.id}`} className="clickable dir-row" data-testid={`mandir-row-${r.code}`} onClick={() => open(r)}>
+                <td>
+                  <Link to={r.source === 'offline' ? `/offline-mandirs/${r.id}` : `/mandirs/${r.id}`} onClick={(e) => e.stopPropagation()}>
+                    <strong>{r.name}</strong>
+                  </Link>
+                  {r.is_demo && <span className="badge demo" style={{ marginLeft: 6 }}>demo</span>}
+                  <div className="sub mono">{r.code}{r.deployment === 'both' && r.offline_reference ? ` · ${r.offline_reference}` : ''}</div>
+                </td>
+                <td><DeploymentPill value={r.deployment} /></td>
+                <td data-testid={`access-${r.code}`}>
+                  <StatusCell r={r} />
+                  {r.source === 'tenant' && (
+                    <div className="sub" data-testid={`visible-${r.code}`}>{r.devotee_visible ? 'listed for devotees' : 'hidden from devotees'}</div>
+                  )}
+                </td>
+                <td>
+                  {r.plan && <div>{r.plan}{r.is_custom_plan && <span className="sub"> · custom price</span>}</div>}
+                  {r.deployment !== 'online' && (
+                    <div style={{ marginTop: r.plan ? 4 : 0 }}>
+                      <LicenceBadge state={r.licence_state} days={r.licence_valid_until ? Math.floor((new Date(r.licence_valid_until).getTime() - Date.now()) / 86400000) : null} />
+                    </div>
+                  )}
+                </td>
+                <td>{[r.city, r.state].filter(Boolean).join(', ') || <span className="muted">—</span>}</td>
+                <td className="num">{r.dues_paise > 0 ? <b style={{ color: 'var(--color-danger)' }}>{formatPaise(r.dues_paise)}</b> : <span className="muted">—</span>}</td>
+                <td className="muted" style={{ whiteSpace: 'nowrap' }}>{formatDate(r.created_at)}</td>
+              </tr>
+            ))}
+            {!loading && rows.length === 0 && (
+              activeFilters || get('deployment')
+                ? <EmptyRow colSpan={7} title="No mandirs match these filters.">
+                    <button className="btn sm" style={{ marginTop: 8 }} onClick={() => { setSearch(''); setParams({}, { replace: true }); }}>Clear filters</button>
+                  </EmptyRow>
+                : <EmptyRow colSpan={7} title="No mandirs yet.">Onboard the first one with <b>Onboard Mandir</b>.</EmptyRow>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {meta && <Pagination page={page} total={meta.total} limit={PAGE} onPage={(p) => update({ page: String(p) })} />}
 
-        <h4 className="form-section">Mandir contact (shown on receipts & directory)</h4>
-        <div className="form-grid">
-          <label className="field"><span>Mandir phone (10-digit)</span>
-            <input name="mandir_mobile" value={form.mandir_mobile} onChange={set('mandir_mobile')} inputMode="numeric" maxLength={10} placeholder="defaults to admin mobile" />
-          </label>
-          <label className="field"><span>Mandir email</span><input name="mandir_email" type="email" value={form.mandir_email} onChange={set('mandir_email')} /></label>
-          <label className="field span-2"><span>Website</span><input name="website" value={form.website} onChange={set('website')} placeholder="https://…" /></label>
-        </div>
+      {showDrafts && (
+        <Modal title="Onboarding drafts" onClose={() => setShowDrafts(false)} wide confirmDiscard={false}>
+          <p className="muted" style={{ marginTop: 0 }}>Onboardings saved with <b>Save as draft</b>. Any super admin can finish one.</p>
+          <table className="data">
+            <thead><tr><th>Mandir</th><th>Runs on</th><th>Step</th><th>Last saved</th><th></th></tr></thead>
+            <tbody>
+              {drafts.map((d) => (
+                <tr key={d.id}>
+                  <td><strong>{d.title || 'Untitled'}</strong>{d.tenant_id && <div className="sub">online part already created</div>}</td>
+                  <td><DeploymentPill value={d.deployment} /></td>
+                  <td>{d.step + 1}</td>
+                  <td>{new Date(d.updated_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}<div className="sub">{d.updated_by_name ?? d.created_by_name ?? ''}</div></td>
+                  <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <button className="btn sm primary" onClick={() => { setShowDrafts(false); setWizard({ draftId: d.id }); }}>Continue</button>{' '}
+                    <button className="btn sm" aria-label="Delete draft" title="Delete draft" onClick={() => deleteDraft(d)}><Trash2 size={13} /></button>
+                  </td>
+                </tr>
+              ))}
+              {drafts.length === 0 && <EmptyRow colSpan={5} title="No saved drafts." />}
+            </tbody>
+          </table>
+        </Modal>
+      )}
 
-        {/* The API checks each of these (common/statutory-id.dto): PAN shape,
-            GSTIN state code + check character, TAN shape, 80G/12AB as the
-            16-character URN. Leave any the trust does not hold empty — "0"
-            or "NA" is refused, and a "0" in GSTIN used to switch GST on. */}
-        <h4 className="form-section">Legal & tax (for 80G receipts)</h4>
-        <div className="form-grid">
-          <label className="field"><span>PAN</span><input name="pan" value={form.pan} onChange={set('pan')} maxLength={10} placeholder="AAATR1234C" /></label>
-          <label className="field"><span>GSTIN (only if GST-registered)</span><input name="gstin" value={form.gstin} onChange={set('gstin')} maxLength={15} placeholder="27AAATR1234C1Z0" /></label>
-          <label className="field"><span>TAN (optional)</span><input name="tan" value={form.tan} onChange={set('tan')} maxLength={10} placeholder="MUMT12345A" /></label>
-          <label className="field"><span>80G registration (URN)</span><input name="reg_80g_number" value={form.reg_80g_number} onChange={set('reg_80g_number')} maxLength={16} placeholder="AAATR1234CF20214" /></label>
-          <label className="field"><span>Registration No.</span><input name="registration_number" value={form.registration_number} onChange={set('registration_number')} maxLength={60} placeholder="SOC/2015/CITY/000123" /></label>
-          <label className="field"><span>Darpan Registration No.</span><input name="darpan_number" value={form.darpan_number} onChange={set('darpan_number')} maxLength={40} placeholder="XX/2015/0123456" /></label>
-          <label className="field"><span>12A reg. number (before 2021)</span><input name="reg_12a_number" value={form.reg_12a_number} onChange={set('reg_12a_number')} maxLength={50} /></label>
-          <label className="field"><span>12AB registration (URN)</span><input name="reg_12ab_number" value={form.reg_12ab_number} onChange={set('reg_12ab_number')} maxLength={16} placeholder="AAATR1234CE20214" /></label>
-        </div>
-
-        <h4 className="form-section">Bank & UPI (receipt payment details)</h4>
-        <div className="form-grid">
-          <label className="field"><span>UPI ID</span><input name="upi_id" value={form.upi_id} onChange={set('upi_id')} placeholder="mandir@upi" /></label>
-          <label className="field"><span>Bank account name</span><input name="bank_account_name" value={form.bank_account_name} onChange={set('bank_account_name')} /></label>
-          <label className="field"><span>Bank account no.</span><input name="bank_account_no" value={form.bank_account_no} onChange={set('bank_account_no')} /></label>
-          <label className="field"><span>IFSC</span><input name="bank_ifsc" value={form.bank_ifsc} onChange={set('bank_ifsc')} /></label>
-          <label className="field"><span>Bank name</span><input name="bank_name" value={form.bank_name} onChange={set('bank_name')} /></label>
-        </div>
-
-        <h4 className="form-section">Modules</h4>
-        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
-          Not every trust is a full temple. Pick a preset, or tick exactly what
-          this one runs — it can be changed later from the mandir's page.
-        </p>
-        <ModulePicker value={modules} onChange={setModules} templeType={form.temple_type} />
-
-        <h4 className="form-section">Directory</h4>
-        <label className="field-check">
-          <input
-            type="checkbox"
-            name="devotee_visible"
-            checked={form.devotee_visible}
-            onChange={(e) => setForm({ ...form, devotee_visible: e.target.checked })}
-          />
-          <span>Show this mandir to devotees (searchable in the devotee app)</span>
-        </label>
-        <label className="field-check">
-          <input type="checkbox" checked={form.global_sync_enabled} onChange={(e) => setForm({ ...form, global_sync_enabled: e.target.checked })} />
-          <span>Mirror donations to the global ledger (global sync)</span>
-        </label>
-      </ActionForm>
-    </Modal>
+      {wizard && (
+        <OnboardingWizard
+          draftId={wizard.draftId}
+          onClose={() => { setWizard(null); loadDrafts(); }}
+          onCreated={(r) => {
+            setWizard(null);
+            loadDrafts();
+            toast.show('Mandir onboarded.');
+            navigate(r.tenantId ? `/mandirs/${r.tenantId}` : `/offline-mandirs/${r.offlineId}`);
+          }}
+        />
+      )}
+      {toast.node}
+    </div>
   );
 }

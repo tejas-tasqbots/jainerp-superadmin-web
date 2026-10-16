@@ -119,7 +119,7 @@ export function SantContentPage() {
 
   return (
     <div>
-      <h1>Pending sant content</h1>
+      <h1>Sant Content</h1>
       <p className="muted" style={{ maxWidth: 760 }}>
         Posted by sangh representatives and not yet visible to devotees. A representative
         changes the ascetic&apos;s location directly; everything else — events, requirements,

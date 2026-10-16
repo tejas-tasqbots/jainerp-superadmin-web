@@ -65,6 +65,7 @@ export function CustomRequestsPage() {
   return (
     <div>
       <h1>Custom Requests</h1>
+      <p className="muted">Trusts asking for a plan or feature outside the catalogue. Leads — reply, then close.</p>
       <ErrorBox error={error} />
 
       <div className="toolbar">

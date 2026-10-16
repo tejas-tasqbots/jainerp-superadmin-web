@@ -1,5 +1,9 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { PageHeader } from '../components/PageHeader';
+import { useCan } from '../auth/permissions';
+import { SubscriptionTerms } from '../components/SubscriptionTerms';
+import { DeploymentPill } from './TenantsPage';
 import { api, formatDate, formatPaise, openReceipt } from '../api/client';
 import { PhoneInput } from '../components/PhoneInput';
 import type { BillingHistory, Invoice, InvoicePayment, License, LifecycleEvent, TenantDetail } from '../api/types';
@@ -31,14 +35,23 @@ export function TenantDetailPage() {
   }, [id]);
   useEffect(load, [load]);
 
-  if (!tenant) return <div><ErrorBox error={error} />Loading…</div>;
+  if (!tenant) return <div><ErrorBox error={error} /><p className="muted">Loading…</p></div>;
 
   return (
     <div>
-      <h1>
-        {tenant.name} <Badge value={tenant.status} />
-      </h1>
-      <p className="muted mono">{tenant.slug} · {tenant.tenancy_tier.replace(/_/g, ' ')} · plan: {tenant.plan}</p>
+      <PageHeader
+        crumbs={[{ to: '/mandirs', label: 'Manage Mandir' }]}
+        title={tenant.name}
+        badges={<>
+          <Badge value={tenant.is_deleted ? 'deleted' : tenant.status} />
+          <DeploymentPill value={tenant.offline_mandir ? 'both' : 'online'} />
+          {tenant.is_demo && <span className="badge demo">demo</span>}
+        </>}
+        subtitle={<span className="mono">{tenant.slug} · plan {tenant.plan} · {tenant.tenancy_tier === 'dedicated' ? 'dedicated database' : 'shared database'}</span>}
+        actions={tenant.offline_mandir
+          ? <Link className="btn" to={`/offline-mandirs/${tenant.offline_mandir.id}`}>Offline licence {tenant.offline_mandir.reference} →</Link>
+          : undefined}
+      />
       <ErrorBox error={error} />
       {notice && <div className="success-box" data-testid="notice">{notice}</div>}
 
@@ -67,6 +80,12 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
     'plan' | 'tier' | 'suspend' | 'deactivate' | 'custom-plan' | 'modules' | null
   >(null);
   const [error, setError] = useState<unknown>(null);
+  // Buttons follow the role (auth/permissions.tsx); the server enforces the same.
+  const canManage = useCan('mandirs.manage');
+  const canBill = useCan('billing.manage');
+  const canReview = useCan('reviews.manage');
+  const canPlatform = useCan('platform.manage');
+  const canOnboard = useCan('mandirs.onboard');
 
   async function action(fn: () => Promise<unknown>, msg: string) {
     setError(null);
@@ -120,6 +139,18 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
                   : <span className="badge">visible flag on, but the mandir is blocked</span>)
               : <span className="badge">hidden from devotees</span>}
           </dd>
+          <dt>Counted as</dt>
+          <dd data-testid="demo-state">
+            {tenant.is_demo
+              ? <span className="badge demo">demo / test — not in revenue or counts</span>
+              : <span className="badge green">customer</span>}
+          </dd>
+          <dt>JainERP Offline</dt>
+          <dd>
+            {tenant.offline_mandir
+              ? <Link to={`/offline-mandirs/${tenant.offline_mandir.id}`}>{tenant.offline_mandir.reference} — licence & payments</Link>
+              : <span className="muted">not used</span>}
+          </dd>
           {!tenant.access_enabled && (
             <>
               <dt>Staff will see</dt>
@@ -127,7 +158,8 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
             </>
           )}
         </dl>
-        <div className="toolbar" style={{ marginTop: 12 }}>
+        {(canManage || canBill || canOnboard) && <div className="toolbar" style={{ marginTop: 12 }}>
+          {canManage && <>
           <button
             className="btn"
             data-testid="toggle-visibility"
@@ -163,7 +195,23 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
               Activate
             </button>
           )}
-          {tenant.is_deleted && (
+          </>}
+          {canBill && <button
+            className="btn"
+            data-testid="toggle-demo"
+            title="A demo / test mandir is left out of MRR, ARR, dues and counts. Nothing changes for the mandir itself."
+            onClick={() => {
+              if (!tenant.is_demo && !window.confirm(`Mark "${tenant.name}" as a demo / test mandir? It will be left out of MRR, ARR, dues and counts on the dashboard.`)) return;
+              void action(
+                () => api(`/admin/tenants/${tenant.id}/demo`, { method: 'PATCH', body: { is_demo: !tenant.is_demo } }),
+                tenant.is_demo ? 'Counted as a customer again' : 'Marked as demo — left out of revenue and counts',
+              );
+            }}
+          >
+            {tenant.is_demo ? 'Count as a customer' : 'Mark as demo / test'}
+          </button>}
+          {canOnboard && !tenant.offline_mandir && !tenant.is_deleted && <AddOfflineButton tenant={tenant} onError={setError} />}
+          {canManage && tenant.is_deleted && (
             <button
               className="btn"
               data-testid="restore"
@@ -174,18 +222,18 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
               Restore deleted mandir
             </button>
           )}
-        </div>
+        </div>}
       </div>
 
       <AccountingBasisCard tenantId={tenant.id} />
 
-      <div className="card">
+      {(canManage || canBill || canReview || canPlatform) && <div className="card">
         <h2>Actions</h2>
         <div className="toolbar">
-          {tenant.status === 'active' && !tenant.is_deleted && (
+          {canManage && tenant.status === 'active' && !tenant.is_deleted && (
             <button className="btn" onClick={() => setModal('suspend')}>Suspend</button>
           )}
-          {tenant.status === 'suspended' && (
+          {canManage && tenant.status === 'suspended' && (
             <button
               className="btn"
               onClick={() => action(() => api(`/admin/tenants/${tenant.id}/reactivate`, { method: 'PATCH', body: {} }), 'Mandir reactivated')}
@@ -193,15 +241,15 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
               Reactivate
             </button>
           )}
-          <button className="btn" data-testid="custom-plan-btn" onClick={() => setModal('custom-plan')}>
+          {canBill && <button className="btn" data-testid="custom-plan-btn" onClick={() => setModal('custom-plan')}>
             {tenant.custom_plan ? 'Edit custom plan' : 'Set custom plan'}
-          </button>
-          <button className="btn" data-testid="modules-btn" onClick={() => setModal('modules')}>
+          </button>}
+          {canManage && <button className="btn" data-testid="modules-btn" onClick={() => setModal('modules')}>
             Modules…
-          </button>
+          </button>}
           {/* Verifying locks the mandir's bank/80G/PAN details: after this they
               can only change via a reviewed request (migration 028). */}
-          <button
+          {canReview && <button
             className="btn"
             onClick={() =>
               action(
@@ -216,10 +264,10 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
             }
           >
             {tenant.sensitive_verified_at ? 'Unlock bank & tax details' : 'Verify bank & tax details'}
-          </button>
-          <button className="btn" onClick={() => setModal('plan')}>Change plan</button>
-          <button className="btn" onClick={() => setModal('tier')}>Change tenancy tier</button>
-          <button
+          </button>}
+          {canBill && <button className="btn" onClick={() => setModal('plan')}>Change plan</button>}
+          {canPlatform && <button className="btn" onClick={() => setModal('tier')}>Change tenancy tier</button>}
+          {canManage && <button
             className="btn"
             onClick={() =>
               action(
@@ -229,14 +277,14 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
             }
           >
             {tenant.global_sync_enabled ? 'Disable' : 'Enable'} global sync
-          </button>
+          </button>}
           {/* No "Delete mandir" here, on purpose (removed 2026-09-29). A trust
               that stops paying is Suspended; one that must not sign in is
               Deactivated — both reversible and both keep its books, invoices
               and receipts reachable. Restore (above) remains for trusts that
               were deleted before this. */}
         </div>
-      </div>
+      </div>}
 
       {modal === 'suspend' && (
         <Modal title="Suspend mandir" onClose={() => setModal(null)}>
@@ -269,6 +317,39 @@ function OverviewTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
         </Modal>
       )}
     </div>
+  );
+}
+
+/**
+ * An online mandir that also wants JainERP Offline (a counter with no
+ * internet): creates its offline record LINKED to this tenant — so the
+ * directory shows one mandir, "Online + Offline" — and opens it to issue the
+ * licence.
+ */
+function AddOfflineButton({ tenant, onError }: { tenant: TenantDetail; onError: (e: unknown) => void }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button className="btn" data-testid="add-offline" disabled={busy} onClick={async () => {
+      if (!window.confirm(`Add JainERP Offline for "${tenant.name}"? This creates its offline record; you then issue the licence.`)) return;
+      setBusy(true);
+      try {
+        const c = tenant.profile.contact as Record<string, string | null | undefined>;
+        const a = tenant.profile.address as Record<string, string | null | undefined>;
+        const mobile = c.mobile ? (c.mobile.startsWith('+') ? c.mobile : `+91${c.mobile.replace(/\D/g, '').slice(-10)}`) : undefined;
+        const r = await api<{ id: string }>('/admin/offline-mandirs', {
+          method: 'POST',
+          body: Object.fromEntries(Object.entries({
+            name: tenant.name, tenant_id: tenant.id, contact_name: c.name, mobile, email: c.email,
+            address: [a.line1, a.line2].filter(Boolean).join(', '), city: a.city, state: a.state, pincode: a.pincode,
+            sect: tenant.sect ?? undefined,
+          }).filter(([, v]) => v)),
+        });
+        navigate(`/offline-mandirs/${r.data.id}`);
+      } catch (e) { onError(e); setBusy(false); }
+    }}>
+      {busy ? 'Adding…' : 'Add JainERP Offline'}
+    </button>
   );
 }
 
@@ -480,6 +561,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
   const [repricing, setRepricing] = useState<Invoice | null>(null);
   const [recording, setRecording] = useState<Invoice | null>(null);
   const [cancelling, setCancelling] = useState<{ invoice: Invoice; payment: InvoicePayment } | null>(null);
+  const canBill = useCan('billing.manage');
 
   const load = useCallback(() => {
     api<Invoice[]>(`/admin/tenants/${tenant.id}/invoices`).then((r) => setInvoices(r.data)).catch(setError);
@@ -495,21 +577,12 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
   return (
     <div>
       <ErrorBox error={error} />
+      <SubscriptionTerms key={`${tenant.pending_amount_paise}-${tenant.subscription?.current_period_end ?? ""}-${invoices.length}-${invoices.reduce((a, i) => a + Number(i.amountPaidPaise ?? 0), 0)}`} tenantId={tenant.id} onChanged={onChanged} />
+
       <div className="card">
-        <h2>Subscription</h2>
-        {tenant.subscription ? (
-          <dl className="kv">
-            <dt>Status</dt><dd><Badge value={tenant.subscription.status} /></dd>
-            <dt>Cycle</dt><dd>{tenant.subscription.billing_cycle}</dd>
-            <dt>Current period</dt>
-            <dd>{formatDate(tenant.subscription.current_period_start)} → {formatDate(tenant.subscription.current_period_end)}</dd>
-            <dt>Auto-debit</dt><dd data-testid="auto-debit">{tenant.subscription.auto_debit}</dd>
-            <dt>Pending dues</dt><dd>{formatPaise(tenant.pending_amount_paise)}</dd>
-          </dl>
-        ) : (
-          <p className="muted">No subscription.</p>
-        )}
-        <div className="toolbar" style={{ marginTop: 12 }}>
+        <h2>Auto-debit</h2>
+        <p className="muted" style={{ marginTop: -6 }}>UPI AutoPay: {tenant.subscription?.auto_debit && tenant.subscription.auto_debit !== 'none' ? <b data-testid="auto-debit">{tenant.subscription.auto_debit}</b> : <span data-testid="auto-debit">none</span>} — a mandir on auto-debit renews by itself.</p>
+        {canBill && <div className="toolbar" style={{ marginTop: 12 }}>
           <button
             className="btn"
             onClick={() => run(async () => {
@@ -532,7 +605,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
           >
             Revoke auto-debit
           </button>
-        </div>
+        </div>}
         {mandateLink && (
           <p data-testid="mandate-link">Authorization link: <a href={mandateLink} target="_blank" rel="noreferrer" className="mono">{mandateLink}</a></p>
         )}
@@ -552,7 +625,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
         <table className="data">
           <thead>
             <tr>
-              <th>Invoice #</th><th>Period</th><th>Total</th><th>Received</th><th>Balance</th><th>Status</th><th></th>
+              <th>Invoice #</th><th>Period</th><th>Due</th><th>Total</th><th>Received</th><th>Balance</th><th>Status</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -564,6 +637,13 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                   <tr>
                     <td className="mono">{inv.invoiceNumber}</td>
                     <td>{formatDate(inv.periodStart)} → {formatDate(inv.periodEnd)}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{(() => {
+                      // Pay-by date (migration 095), or issue + 15 days on an older invoice.
+                      const due = inv.dueDate ? new Date(inv.dueDate) : inv.createdAt ? new Date(new Date(inv.createdAt).getTime() + 15 * 86400000) : null;
+                      if (!due || !isOpen) return due ? formatDate(due.toISOString()) : '—';
+                      const late = Math.floor((Date.now() - due.getTime()) / 86400000);
+                      return <>{formatDate(due.toISOString())}{late > 0 && <div className="small" style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{late} day{late === 1 ? '' : 's'} overdue</div>}</>;
+                    })()}</td>
                     <td>
                       {formatPaise(inv.totalPaise)}
                       <div className="muted small">
@@ -578,12 +658,12 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                     <td><Badge value={inv.status} /></td>
                     <td>
                       <div className="toolbar" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                        {isOpen && (
+                        {canBill && isOpen && (
                           <button className="btn sm primary" data-testid={`record-payment-${inv.invoiceNumber}`} onClick={() => setRecording(inv)}>
                             {inv.amountPaidPaise ? 'Record next payment' : 'Record payment'}
                           </button>
                         )}
-                        {isOpen && (
+                        {canBill && isOpen && (
                           <button className="btn sm" onClick={() => run(async () => {
                             const { data } = await api<{ short_url: string }>(`/admin/tenants/${tenant.id}/payment-link`, {
                               method: 'POST',
@@ -597,7 +677,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                         {/* Change the amount agreed with this mandir while money
                             is still owing. Refused once fully paid — a paid tax
                             invoice is corrected by void + reissue, not an UPDATE. */}
-                        {isOpen && (
+                        {canBill && isOpen && (
                           <button className="btn sm" data-testid={`reprice-${inv.invoiceNumber}`} onClick={() => setRepricing(inv)}>
                             Re-price
                           </button>
@@ -616,7 +696,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                             Combined receipt
                           </button>
                         )}
-                        {inv.status === 'unpaid' && !live.length && (
+                        {canBill && inv.status === 'unpaid' && !live.length && (
                           <button className="btn sm danger" onClick={() => run(async () => {
                             if (!window.confirm(`Void ${inv.invoiceNumber}? It stays on record as void and can no longer be paid.`)) return;
                             await api(`/admin/invoices/${inv.id}/void`, { method: 'POST', body: { reason: 'voided from console' } });
@@ -631,7 +711,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                   </tr>
                   {(inv.payments ?? []).length > 0 && (
                     <tr className="subrow">
-                      <td colSpan={7} style={{ paddingTop: 0 }}>
+                      <td colSpan={8} style={{ paddingTop: 0 }}>
                         <table className="data nested" data-testid={`payments-${inv.invoiceNumber}`}>
                           <thead>
                             <tr><th>Receipt #</th><th>Received on</th><th>Method</th><th>Reference</th><th>Amount</th><th>Recorded</th><th></th></tr>
@@ -654,7 +734,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                                     onClick={() => open(`/admin/invoices/${inv.id}/payment-receipt?payment_id=${p.id}&channel=download`)}>
                                     Receipt
                                   </button>{' '}
-                                  {!p.voided_at && (
+                                  {canBill && !p.voided_at && (
                                     <button className="btn sm danger" data-testid={`cancel-payment-${p.receipt_number}`}
                                       onClick={() => setCancelling({ invoice: inv, payment: p })}>
                                       Cancel

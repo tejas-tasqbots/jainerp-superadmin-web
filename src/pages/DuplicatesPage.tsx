@@ -100,7 +100,7 @@ export function DuplicatesPage() {
 
   return (
     <div>
-      <h1>Possible duplicate profiles</h1>
+      <h1>Duplicates</h1>
       <p className="muted" style={{ maxWidth: 760 }}>
         {meta.total ?? groups.length} name-and-rank groups hold more than one profile
         ({meta.redundant ?? 0} rows beyond the first). These are <strong>candidates</strong>,
