@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatPaise, openReceipt } from '../api/client';
 import { ActionForm, ErrorBox, Modal } from '../components/ui';
+import { DeleteEntryButton } from '../components/DeleteEntryButton';
 
 /**
  * Self-serve registrations — every Trust/Temple that started signing up from
@@ -83,6 +84,7 @@ export function RegistrationsPage() {
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
   const [error, setError] = useState<unknown>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [detail, setDetail] = useState<Registration | null>(null);
   const [quoting, setQuoting] = useState<Registration | null>(null);
   const [markingPaid, setMarkingPaid] = useState<Registration | null>(null);
@@ -143,6 +145,7 @@ export function RegistrationsPage() {
     <div>
       <h1>Registrations</h1>
       <ErrorBox error={error} />
+      {notice && <div className="success-box" data-testid="notice">{notice}</div>}
 
       <div className="toolbar">
         <p className="muted" style={{ margin: 0 }}>
@@ -264,6 +267,16 @@ export function RegistrationsPage() {
                     </button>
                   </>
                 )}
+                {/* Test or duplicate sign-ups only: the API refuses anything paid,
+                    invoiced or onboarded, so the button is not offered there. */}
+                {!r.paid_at && !r.invoice_id && !r.tenant_id && (
+                  <DeleteEntryButton
+                    path={`/admin/registrations/${r.id}`}
+                    what={`registration ${r.reference}`}
+                    onDeleted={(m) => { setError(null); setNotice(m); load(); }}
+                    onError={setError}
+                  />
+                )}{' '}
                 {r.status === 'failed' && (
                   <button
                     className="btn sm primary"

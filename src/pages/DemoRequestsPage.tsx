@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, loadSession } from '../api/client';
+import { DeleteEntryButton } from '../components/DeleteEntryButton';
 import { ActionForm, ErrorBox, Modal, Pagination } from '../components/ui';
 
 /**
@@ -118,6 +119,7 @@ export function DemoRequestsPage() {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState<unknown>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<DemoRequest | null>(null);
 
   const load = useCallback(() => {
@@ -142,6 +144,7 @@ export function DemoRequestsPage() {
       <h1>Demo Requests</h1>
       <p className="muted">People who asked for a demo on jainerp.org. Call them, then mark the request handled.</p>
       <ErrorBox error={error} />
+      {notice && <div className="success-box" data-testid="notice">{notice}</div>}
 
       <div className="toolbar">
         <p className="muted" style={{ margin: 0 }}>
@@ -237,6 +240,13 @@ export function DemoRequestsPage() {
               </td>
               <td>
                 <button className="btn sm" onClick={() => setEditing(r)}>Open</button>
+                {(<>{' '}<DeleteEntryButton
+                  path={`/admin/demo-requests/${r.id}`}
+                  what={`demo request ${r.reference}`}
+                  note="If it was added to Leads, that lead is deleted with it."
+                  onDeleted={(m) => { setError(null); setNotice(m); load(); }}
+                  onError={setError}
+                /></>)}
               </td>
             </tr>
           ))}

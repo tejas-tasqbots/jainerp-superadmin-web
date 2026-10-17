@@ -8,6 +8,7 @@ import { DraftBar, DraftStatus, useFormDraft, hasFormDraft } from '../components
 import { OnboardingWizard } from '../components/OnboardingWizard';
 import { StateSelect, CitySelect } from '../components/GeoSelect';
 import { useCan, useMe } from '../auth/permissions';
+import { DeleteEntryButton } from '../components/DeleteEntryButton';
 
 /**
  * Leads — the sales pipeline (superadmin-api leads/leads.ts, migration 097).
@@ -350,6 +351,19 @@ function LeadView({ id, team, onClose, onChanged, toast }: { id: string; team: T
             <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
               {canOnboard && <button className="btn primary" data-testid="lead-onboard" onClick={() => setOnboarding(true)}>Onboard this mandir</button>}
               <button className="btn" onClick={() => setLosing(true)}>Mark lost</button>
+            </div>
+          )}
+          {/* Test or duplicate leads. A won lead is how a live mandir came in,
+              so it is kept (the API refuses it too). */}
+          {lead.stage !== 'won' && (
+            <div style={{ marginTop: 12 }}>
+              <DeleteEntryButton
+                path={`/admin/leads/${lead.id}`}
+                what={`lead ${lead.reference}`}
+                note={lead.source.startsWith('website_') ? 'It came from a website request; that request is deleted with it, so it is not imported again.' : undefined}
+                onDeleted={(m) => { onClose(); onChanged(); toast(m); }}
+                onError={setError}
+              />
             </div>
           )}
         </section>

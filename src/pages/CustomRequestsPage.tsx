@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { DeleteEntryButton } from '../components/DeleteEntryButton';
 import { ActionForm, ErrorBox, Modal } from '../components/ui';
 
 /**
@@ -54,6 +55,7 @@ export function CustomRequestsPage() {
   const [rows, setRows] = useState<CustomRequest[]>([]);
   const [status, setStatus] = useState('');
   const [error, setError] = useState<unknown>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<CustomRequest | null>(null);
 
   const load = useCallback(() => {
@@ -67,6 +69,7 @@ export function CustomRequestsPage() {
       <h1>Custom Requests</h1>
       <p className="muted">Trusts asking for a plan or feature outside the catalogue. Leads — reply, then close.</p>
       <ErrorBox error={error} />
+      {notice && <div className="success-box" data-testid="notice">{notice}</div>}
 
       <div className="toolbar">
         <p className="muted" style={{ margin: 0 }}>
@@ -138,6 +141,13 @@ export function CustomRequestsPage() {
               </td>
               <td>
                 <button className="btn sm" onClick={() => setEditing(r)}>Open</button>
+                {!r.tenant_id && (<>{' '}<DeleteEntryButton
+                  path={`/admin/custom-requests/${r.id}`}
+                  what={`custom request ${r.reference}`}
+                  note="If it was added to Leads, that lead is deleted with it."
+                  onDeleted={(m) => { setError(null); setNotice(m); load(); }}
+                  onError={setError}
+                /></>)}
               </td>
             </tr>
           ))}
