@@ -35,6 +35,20 @@ export function TenantDetailPage() {
   }, [id]);
   useEffect(load, [load]);
 
+  // The online desktop app signs in with the trust's mobile OTP, so a desktop
+  // licence key is no longer issued to an online mandir, and JainERP Offline's
+  // licence lives on its Offline Mandir page. The tab stays only while this
+  // trust still holds an ACTIVE older key, so it can be revoked; otherwise an
+  // online mandir showed a "Licenses" tab that had nothing to do with it.
+  const [activeKeys, setActiveKeys] = useState(0);
+  const loadKeys = useCallback(() => {
+    api<License[]>(`/admin/tenants/${id}/licenses`)
+      .then((r) => setActiveKeys(r.data.filter((l) => l.status === 'active').length))
+      .catch(() => setActiveKeys(0));
+  }, [id]);
+  useEffect(loadKeys, [loadKeys]);
+  const tabs: Tab[] = ['overview', 'billing', 'history', 'users', 'devices', 'people', ...(activeKeys > 0 ? ['licenses' as Tab] : [])];
+
   if (!tenant) return <div><ErrorBox error={error} /><p className="muted">Loading…</p></div>;
 
   return (
@@ -56,9 +70,9 @@ export function TenantDetailPage() {
       {notice && <div className="success-box" data-testid="notice">{notice}</div>}
 
       <div className="tabs">
-        {(['overview', 'billing', 'history', 'users', 'devices', 'people', 'licenses'] as Tab[]).map((t) => (
+        {tabs.map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t === 'people' ? 'Trustees & Requirements' : t === 'users' ? 'Mandir Users' : t === 'devices' ? 'Devices & Sessions' : t === 'history' ? 'Subscription & Receipts' : t[0].toUpperCase() + t.slice(1)}
+            {t === 'people' ? 'Trustees & Requirements' : t === 'users' ? 'Mandir Users' : t === 'devices' ? 'Devices & Sessions' : t === 'history' ? 'Subscription & Receipts' : t === 'licenses' ? 'Desktop licence keys' : t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
@@ -69,7 +83,7 @@ export function TenantDetailPage() {
       {tab === 'users' && <UsersTab tenant={tenant} onNotice={setNotice} />}
       {tab === 'devices' && <SessionsTab tenant={tenant} onNotice={setNotice} />}
       {tab === 'people' && <PeopleTab tenant={tenant} onChanged={(msg) => { setNotice(msg); load(); }} />}
-      {tab === 'licenses' && <LicensesTab tenant={tenant} onChanged={(msg) => { setNotice(msg); }} />}
+      {tab === 'licenses' && activeKeys > 0 && <LicensesTab tenant={tenant} onChanged={(msg) => { setNotice(msg); loadKeys(); }} />}
     </div>
   );
 }
@@ -1593,7 +1607,6 @@ function TrusteeForm({ tenantId, onDone }: { tenantId: string; onDone: () => voi
 function LicensesTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (msg: string) => void }) {
   const [licenses, setLicenses] = useState<License[]>([]);
   const [error, setError] = useState<unknown>(null);
-  const [showIssue, setShowIssue] = useState(false);
 
   const load = useCallback(() => {
     api<License[]>(`/admin/tenants/${tenant.id}/licenses`).then((r) => setLicenses(r.data)).catch(setError);
@@ -1605,10 +1618,13 @@ function LicensesTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
       <ErrorBox error={error} />
       <div className="card">
         <div className="toolbar">
-          <h2 style={{ margin: 0 }}>Offline desktop licenses</h2>
-          <div className="grow" />
-          <button className="btn primary sm" onClick={() => setShowIssue(true)}>+ Issue license</button>
+          <h2 style={{ margin: 0 }}>Desktop licence keys</h2>
         </div>
+        <p className="muted" style={{ margin: '0 0 10px' }}>
+          Keys from before the desktop app signed in with the trust's mobile OTP. No new key is
+          needed: revoke any still active once the trust signs in with OTP. JainERP Offline's
+          licence is on its Offline Mandir page.
+        </p>
         <table className="data">
           <thead><tr><th>Key</th><th>Edition</th><th>Devices</th><th>Valid until</th><th>Status</th><th></th></tr></thead>
           <tbody>
@@ -1637,28 +1653,7 @@ function LicensesTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (
         </table>
       </div>
 
-      {showIssue && (
-        <Modal title="Issue offline license" onClose={() => setShowIssue(false)}>
-          <IssueLicenseForm tenantId={tenant.id} onDone={() => { setShowIssue(false); load(); onChanged('License issued'); }} />
-        </Modal>
-      )}
     </div>
-  );
-}
-
-function IssueLicenseForm({ tenantId, onDone }: { tenantId: string; onDone: () => void }) {
-  const nextYear = new Date();
-  nextYear.setFullYear(nextYear.getFullYear() + 1);
-  const [seats, setSeats] = useState(1);
-  const [expires, setExpires] = useState(nextYear.toISOString().slice(0, 10));
-  return (
-    <ActionForm submitLabel="Issue" onDone={onDone}
-      onSubmit={async () => {
-        await api(`/admin/tenants/${tenantId}/licenses`, { method: 'POST', body: { seats, expires_at: expires } });
-      }}>
-      <label className="field"><span>Device seats</span><input type="number" min={1} value={seats} onChange={(e) => setSeats(Number(e.target.value))} /></label>
-      <label className="field"><span>Expires</span><input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} /></label>
-    </ActionForm>
   );
 }
 

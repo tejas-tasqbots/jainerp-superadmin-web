@@ -216,17 +216,11 @@ try {
   await page.waitForSelector('td:has-text("Mahesh Jain")');
   pass('trustee added');
 
-  // ---------- Licenses ----------
-  await page.click('.tabs button:has-text("Licenses")');
-  await page.click('button:has-text("+ Issue license")');
-  await page.click('.modal button:has-text("Issue")');
-  await page.waitForSelector('td.mono:has-text("JERP-")');
-  const key = await page.textContent('td.mono:has-text("JERP-")');
-  pass(`license issued: ${key.trim()}`);
-  await page.click('table button:has-text("Revoke")');
-  await page.waitForSelector('.badge.revoked');
-  await page.screenshot({ path: SHOTS + '06-licenses.png' });
-  pass('license revoked');
+  // ---------- No licence tab on an online mandir ----------
+  // The desktop app signs in with the trust's mobile OTP; a licence key is no
+  // longer issued to an online mandir (JainERP Offline's is on its own page).
+  if (await page.locator('.tabs button:has-text("licence")').count()) throw new Error('an online mandir shows a licence tab');
+  pass('no licence tab on an online mandir');
 
   // ---------- Soft delete + restore ----------
   await page.click('.tabs button:has-text("Overview")');

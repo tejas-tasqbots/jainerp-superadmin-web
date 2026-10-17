@@ -165,7 +165,6 @@ try {
       ['history', 'Subscription & Receipts'],
       ['users', 'Mandir Users'],
       ['people', 'Trustees & Requirements'],
-      ['licenses', 'Licenses'],
     ];
     await screen('SAF-A4-01', 'Mandir detail opens on Overview',
       `/mandirs/${subject.id}`, [subject.slug]);
@@ -433,24 +432,11 @@ try {
     await page.locator('button', { hasText: /bank & tax details$/ }).first().click();
     await expectNotice('SAF-A4-verify-sensitive', 'Verify & lock bank/tax details (A4)');
 
-    // Licenses tab — issue an offline desktop license
+    // An online mandir has no licence tab: the desktop app signs in with the
+    // trust's mobile OTP, and JainERP Offline's licence is on its own page.
     await go(detail, 1500);
-    await page.locator('.tabs button', { hasText: /^Licenses$/ }).click();
-    await page.waitForTimeout(1200);
-    const issueBtn = page.locator('button', { hasText: '+ Issue license' }).first();
-    if (await issueBtn.count()) {
-      await issueBtn.click();
-      await page.waitForTimeout(700);
-      pageErrors = []; serverErrors = [];
-      await page.locator('form button[type="submit"]').last().click();
-      await page.waitForTimeout(2000);
-      const lic = await api('GET', `/admin/tenants/${newId}/licenses`, { token: TOKEN });
-      const licRows = Array.isArray(lic.data) ? lic.data : (lic.data?.items ?? []);
-      await page.screenshot({ path: `${SHOTS}a4-licenses.png`, fullPage: true });
-      rec('SAF-A4-license', 'Issue an offline desktop license (A4)',
-        licRows.length > 0 && serverErrors.length === 0,
-        `licenses=${licRows.length}${serverErrors[0] ? ' ' + serverErrors[0] : ''}`);
-    } else rec('SAF-A4-license', 'Issue an offline desktop license (A4)', false, 'no "+ Issue license" button');
+    rec('SAF-A4-license', 'No licence tab on an online mandir (A4)',
+      (await page.locator('.tabs button', { hasText: /licen/i }).count()) === 0);
 
     // ── A4. soft delete → recycle bin → restore ────────────────────────────
     await go(detail, 1500);
