@@ -4,35 +4,20 @@
 #   main  -> dev  (AWS EC2)       THIS FILE
 #   prod  -> prod (GCP Cloud Run) .github/workflows/prod.yml
 #
-# APPROVAL GATED. The `development` environment requires a reviewer, so a push
-# to main queues and burns NO Actions minutes until you approve it. The org ran
-# out of its 2,000 free minutes in August 2026 with eight repos auto-building on
-# every push; this is the fix.
-#
-# ONE-TIME SETUP: create an environment named exactly `development` in this
-# repo (Settings -> Environments) and add yourself as a required reviewer.
-# WITHOUT THAT REVIEWER THE GATE DOES NOTHING - GitHub creates the environment
-# implicitly on first use and runs straight through it.
+# APPROVAL / PASSWORD GATED.
+# Triggered manually via workflow_dispatch with a required password verified
+# against the `development` environment secret `DEPLOY_PASS`.
 # ---------------------------------------------------------------------------
 name: Build & Deploy (superadmin-web)
 
 on:
   # MANUAL ONLY - there is deliberately no `push:` trigger.
-  #
-  # The plan was to keep `push: branches: [main]` and gate it with a
-  # `development` environment requiring a reviewer. THAT IS NOT AVAILABLE HERE:
-  # GitHub Free does not offer the required-reviewers protection rule on private
-  # repos. Creating it returns
-  #   422 "Please ensure the billing plan supports the required reviewers
-  #        protection rule"
-  # and the `production` environment turned out to have protection_rules: []
-  # too - so nothing was ever actually gated. Verified 2026-08-17 via the API.
-  #
-  # Without a gate, every push to main spent ~3 minutes automatically, across
-  # eight repos. That is what exhausted the 2,000 free Actions minutes. So the
-  # control is the trigger itself: run this from the Actions tab when you want
-  # a dev deploy, choosing the branch in the dialog.
   workflow_dispatch:
+    inputs:
+      deploy_pass:
+        description: 'Enter DEPLOY_PASS to authorize this dev deployment'
+        required: true
+        type: number
 
 concurrency:
   group: deploy-superadmin-web
@@ -42,17 +27,34 @@ env:
   IMAGE: ghcr.io/tasqbots/jainerp-superadmin-web
 
 jobs:
-  # Nothing gated this deploy: a push went straight to a docker build and out to
-  # the box, so a lint or type error only surfaced if it happened to break the
-  # image build. This job runs the checks first and the deploy waits on it.
+  # Runs password validation against the `development` environment first,
+  # then lints and builds before allowing build-and-deploy to start.
   verify:
     runs-on: ubuntu-latest
+    environment: development
     steps:
+      - name: Validate DEPLOY_PASS
+        env:
+          INPUT_PASS: ${{ inputs.deploy_pass }}
+          EXPECTED_PASS: ${{ secrets.DEPLOY_PASS }}
+        run: |
+          if [ -z "$EXPECTED_PASS" ]; then
+            echo "::error::DEPLOY_PASS secret is not set in the 'development' environment."
+            exit 1
+          fi
+          if [ "$INPUT_PASS" != "$EXPECTED_PASS" ]; then
+            echo "::error::Invalid deployment password provided. Aborting deploy."
+            exit 1
+          fi
+          echo "Deploy password verified." >>$GITHUB_STEP_SUMMARY
+
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
+
       - run: npm ci
       - run: npm run lint
       - run: npm run build
@@ -82,14 +84,6 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          # LAYER CACHE. Without this every build ran `npm install` twice from
-          # cold - once for the builder stage, once for the runtime stage - on
-          # every push to main, across eight repos. That is what exhausted the
-          # 2,000 free Actions minutes for the month (2026-08).
-          #
-          # mode=max caches intermediate stages too, which is the point: the
-          # expensive layer is the builder's node_modules, and it only changes
-          # when package-lock.json does.
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
@@ -106,18 +100,6 @@ jobs:
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
-          # The remote body is a here-doc so it can hold a lock, retry the
-          # recreate and health-gate the result.
-          #
-          # Why the lock: all eight apps share one EC2 box, and GitHub's
-          # `concurrency:` is scoped to a single repository — it cannot serialise
-          # six repos deploying at once. On 2026-08-01 three deploys failed and a
-          # fourth reported success while still serving its old image.
-          #
-          # Why no `docker system prune -f`: that was the cause. Run concurrently
-          # it deletes another job's freshly pulled image mid-deploy. Disk is
-          # reclaimed by a scheduled cleanup on the box instead (deploy/cleanup.sh),
-          # never inline with a deploy.
           ssh -i /tmp/deploy_key \
             -o StrictHostKeyChecking=no \
             -o ConnectTimeout=30 \
@@ -134,12 +116,6 @@ jobs:
             exit 1
           fi
 
-          # Fail at the cause. The remote body runs `set -uo pipefail` with no
-          # -e, so an unguarded login failure used to fall straight through to
-          # the health check below - which PASSES, because the OLD container is
-          # still serving. On 2026-09-08 that printed "health OK after 1 tries"
-          # seconds before the tag guard failed the job, burying a dead
-          # credential under what looked like a deploy problem.
           if ! echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin; then
             echo "::error::docker login to ghcr.io failed on the box. GHCR_PAT is expired or missing read:packages, or GHCR_USER is wrong. Nothing below this can succeed."
             exit 1
@@ -155,8 +131,6 @@ jobs:
           fi
 
           # Recreate, retrying once on the transient "No such container" race.
-          # --no-deps so recreating this service cannot drag its depends_on
-          # peers along from a stale local :latest.
           up() { $COMPOSE up -d --force-recreate --no-deps --remove-orphans superadmin-web; }
           if ! up; then
             echo "compose up failed - retrying once after 5s..."
@@ -164,8 +138,7 @@ jobs:
             up || echo "compose up failed twice"
           fi
 
-          # Health-gate: it must actually serve, else fail the deploy. A green
-          # check on a stale container is worse than a red one.
+          # Health-gate: it must actually serve, else fail the deploy.
           ok=0
           for i in $(seq 1 20); do
             if curl -fs -m 5 http://localhost:8080/ >/dev/null 2>&1; then
@@ -185,21 +158,10 @@ jobs:
           echo "running image: $running"
           case "$running" in
             *:"$TAG") echo "deploy healthy, serving $TAG." ;;
-            *) echo "::error::jainerp-superadmin-web is serving $running, expected tag $TAG"; exit 1 ;;
+            *) echo "::error::jainerp-superadmin-web is serving $running, expected tag$TAG"; exit 1 ;;
           esac
 
           # PERSIST THE TAG, so nothing can silently roll this service back.
-          #
-          # The export above only exists in this shell. docker-compose.aws.yml reads
-          # ${SUPERADMIN_WEB_TAG:-latest}, so ANY later compose invocation that does not set it
-          # — another repo deploying, a manual `up -d`, a reboot bringing the stack
-          # up — re-resolves this service to :latest and recreates the container from
-          # a stale local image. On 2026-08-12 that put all four APIs back on a
-          # 7-day-old build while their correct images sat unused on the box, and the
-          # deploys had all reported success because each one WAS correct at the time.
-          #
-          # Writing it into .env.aws (which every compose command here already loads)
-          # makes the pin durable and survives a reboot.
           touch .env.aws
           sed -i "/^SUPERADMIN_WEB_TAG=/d" .env.aws
           echo "SUPERADMIN_WEB_TAG=$TAG" >> .env.aws
