@@ -275,6 +275,29 @@ export interface Invoice {
   amountPaidPaise: number;
   balancePaise: number;
   payments: InvoicePayment[];
+  // ---- migration 102: line items, bill date, edits ----
+  /** Bill date (the tax invoice's date); null on older invoices — read createdAt. */
+  invoiceDate?: string | null;
+  /** The amounts on the lines were entered with GST included. */
+  priceIncludesGst?: boolean;
+  editCount?: number;
+  editedAt?: string | null;
+  /** The charges on the bill; empty on a bill raised before line items. */
+  lines?: InvoiceLine[];
+}
+
+export interface InvoiceLine {
+  line_no: number;
+  item_type: string;
+  description: string;
+  sac: string | null;
+  amount_paise: number;
+  gst_rate: number;
+  taxable_paise: number;
+  gst_paise: number;
+  total_paise: number;
+  period_start: string | null;
+  period_end: string | null;
 }
 
 /** One payment received against an invoice, with its own receipt number (migration 088). */

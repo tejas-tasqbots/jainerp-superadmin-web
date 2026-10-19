@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Download, RefreshCw } from 'lucide-react';
 import { api, formatDate, formatPaise, openReceipt, type ApiMeta } from '../api/client';
-import { ErrorBox, Pagination, useToast } from '../components/ui';
+import { ActionForm, ErrorBox, Pagination, useToast } from '../components/ui';
 import { EmptyRow, PageHeader } from '../components/PageHeader';
 import { useCan } from '../auth/permissions';
 
@@ -15,6 +15,8 @@ import { useCan } from '../auth/permissions';
  *   Invoices      every invoice across mandirs; filter, search, export CSV
  *   Renewals due  subscriptions ending soon (or ended) with no renewal invoice
  *                 yet — raise it here, one by one, on purpose
+ *   Bill numbers  the one invoice series (migration 102): prefix, digits and
+ *                 the next number — GST Rule 46, at most 16 characters
  *
  * Customers only: demo mandirs (migration 094) are left out.
  */
@@ -33,10 +35,14 @@ interface InvoiceRow {
 interface RenewalRow {
   subscription_id: string; tenant_id: string; mandir_name: string; plan_display: string; billing_cycle: string; status: string;
   current_period_end: string; days_left: number; amount_paise: number; custom_price: boolean; outstanding_paise: number;
+  /** Next term's agreed charges (migration 102): the bill total, GST included. */
+  agreed_lines_total_paise?: number | null;
+  agreed_lines?: { description: string; total_paise: number }[] | null;
 }
+interface Series { prefix: string; pad: number; fy: string; next_number: number; next_invoice_number: string }
 
-type Tab = 'overview' | 'invoices' | 'renewals';
-const TABS: Array<[Tab, string]> = [['overview', 'Overview'], ['invoices', 'Invoices'], ['renewals', 'Renewals due']];
+type Tab = 'overview' | 'invoices' | 'renewals' | 'numbers';
+const TABS: Array<[Tab, string]> = [['overview', 'Overview'], ['invoices', 'Invoices'], ['renewals', 'Renewals due'], ['numbers', 'Bill numbers']];
 
 export function BillingPage() {
   const [params, setParams] = useSearchParams();
@@ -70,6 +76,7 @@ export function BillingPage() {
         {tab === 'overview' && <Overview s={summary} go={go} />}
         {tab === 'invoices' && <Invoices />}
         {tab === 'renewals' && <Renewals onChanged={loadSummary} />}
+        {tab === 'numbers' && <BillNumbers />}
       </div>
     </div>
   );
@@ -255,7 +262,9 @@ function Renewals({ onChanged }: { onChanged: () => void }) {
   useEffect(load, [load]);
 
   async function raise(r: RenewalRow) {
-    if (!window.confirm(`Raise the renewal invoice for ${r.mandir_name}: ${formatPaise(r.amount_paise)} + GST for the next ${r.billing_cycle === 'yearly' ? 'year' : 'month'}?`)) return;
+    const cycle = r.billing_cycle === 'yearly' ? 'year' : 'month';
+    const what = r.agreed_lines_total_paise ? `${formatPaise(r.agreed_lines_total_paise)} incl. GST (the agreed charges)` : `${formatPaise(r.amount_paise)} + GST`;
+    if (!window.confirm(`Raise the renewal invoice for ${r.mandir_name}: ${what} for the next ${cycle}?`)) return;
     setBusy(r.subscription_id);
     try {
       const res = await api<{ invoice_number: string }>(`/admin/subscriptions/${r.subscription_id}/renewal-invoice`, { method: 'POST', body: {} });
@@ -276,7 +285,7 @@ function Renewals({ onChanged }: { onChanged: () => void }) {
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Mandir</th><th>Plan</th><th>Period ends</th><th className="num">Renewal (before GST)</th><th className="num">Already owed</th><th></th></tr></thead>
+          <thead><tr><th>Mandir</th><th>Plan</th><th>Period ends</th><th className="num">Renewal</th><th className="num">Already owed</th><th></th></tr></thead>
           <tbody>
             {(rows ?? []).map((r) => (
               <tr key={r.subscription_id} data-testid={`renewal-${r.mandir_name}`}>
@@ -288,7 +297,11 @@ function Renewals({ onChanged }: { onChanged: () => void }) {
                     {r.days_left < 0 ? `ended ${-r.days_left} day${r.days_left === -1 ? '' : 's'} ago` : r.days_left === 0 ? 'ends today' : `in ${r.days_left} day${r.days_left === 1 ? '' : 's'}`}
                   </div>
                 </td>
-                <td className="num">{formatPaise(r.amount_paise)}</td>
+                <td className="num">
+                  {r.agreed_lines_total_paise
+                    ? <>{formatPaise(r.agreed_lines_total_paise)} <span className="sub">incl. GST</span><div className="sub">{(r.agreed_lines ?? []).map((l) => l.description).join(' · ')}</div></>
+                    : <>{formatPaise(r.amount_paise)} <span className="sub">+ GST</span></>}
+                </td>
                 <td className="num">{r.outstanding_paise > 0 ? <b style={{ color: 'var(--color-danger)' }}>{formatPaise(r.outstanding_paise)}</b> : <span className="muted">—</span>}</td>
                 <td style={{ textAlign: 'right' }}>
                   {canBill && <button className="btn sm primary" disabled={busy === r.subscription_id} onClick={() => raise(r)}>{busy === r.subscription_id ? 'Raising…' : 'Raise renewal invoice'}</button>}
@@ -299,6 +312,71 @@ function Renewals({ onChanged }: { onChanged: () => void }) {
           </tbody>
         </table>
       </div>
+      {toast.node}
+    </div>
+  );
+}
+
+/**
+ * The invoice number series. Every bill — raised here, on renewal, at sign-up
+ * or by a trust upgrading itself — takes the next number from it, so it stays
+ * one unbroken run per financial year, as GST Rule 46 asks. {FY} in the
+ * prefix becomes the year (2026-27) and the run starts again each April.
+ */
+function BillNumbers() {
+  const [s, setS] = useState<Series | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [f, setF] = useState({ prefix: '', pad: '5', next: '' });
+  const canBill = useCan('billing.manage');
+  const toast = useToast();
+  const load = useCallback(() => {
+    api<Series>('/admin/billing/series').then((r) => {
+      setS(r.data); setError(null);
+      setF({ prefix: r.data.prefix, pad: String(r.data.pad), next: String(r.data.next_number) });
+    }).catch(setError);
+  }, []);
+  useEffect(load, [load]);
+  if (!s) return <div><ErrorBox error={error} /><p className="muted">Loading…</p></div>;
+
+  const fy = s.fy;
+  const pad = Math.max(1, Math.min(8, Number(f.pad) || 1));
+  const next = Number(f.next) || 0;
+  const sample = `${f.prefix.replace('{FY}', fy)}${String(next).padStart(pad, '0')}`;
+  const tooLong = sample.length > 16;
+  return (
+    <div className="card" style={{ maxWidth: 720 }} data-testid="bill-numbers">
+      <ErrorBox error={error} />
+      <h2>Bill numbers</h2>
+      <p className="muted" style={{ marginTop: -6 }}>
+        The next bill will be <b className="mono" data-testid="next-number">{s.next_invoice_number}</b>. Every bill takes the next number from this
+        one series, whoever raises it. A number can also be typed on a single bill, or changed when editing it.
+      </p>
+      {canBill ? (
+        <ActionForm draft={false} successMessage={null} submitLabel="Save numbering"
+          onSubmit={async () => {
+            if (tooLong) throw new Error('A bill number can be at most 16 characters (GST Rule 46).');
+            const { data } = await api<Series>('/admin/billing/series', { method: 'PUT', body: { prefix: f.prefix, pad, next_number: next } });
+            setS(data);
+            toast.show(`Saved — the next bill will be ${data.next_invoice_number}.`);
+          }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10 }}>
+            <label className="field"><span>Prefix</span>
+              <input value={f.prefix} maxLength={14} onChange={(e) => setF({ ...f, prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9/{}-]/gi, '') })} data-testid="series-prefix" />
+              <span className="hint">Letters, digits, / and -. <span className="mono">{'{FY}'}</span> becomes {fy}.</span>
+            </label>
+            <label className="field"><span>Digits</span>
+              <input type="number" min={1} max={8} value={f.pad} onChange={(e) => setF({ ...f, pad: e.target.value })} />
+            </label>
+            <label className="field"><span>Next number ({fy})</span>
+              <input type="number" min={1} value={f.next} onChange={(e) => setF({ ...f, next: e.target.value })} data-testid="series-next" />
+            </label>
+          </div>
+          <p className={tooLong ? '' : 'muted'} style={{ margin: '4px 0 10px', color: tooLong ? 'var(--color-danger)' : undefined }}>
+            Next bill: <b className="mono">{sample}</b> · {sample.length}/16 characters
+            {next < s.next_number ? ' · going back is refused if that number is already used' : ''}
+          </p>
+        </ActionForm>
+      ) : <p className="muted">Only billing staff can change the numbering.</p>}
       {toast.node}
     </div>
   );

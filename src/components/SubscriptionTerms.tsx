@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, formatDate, formatPaise } from '../api/client';
 import { ActionForm, ErrorBox, Modal } from './ui';
 import { useCan } from '../auth/permissions';
+import { ApiLine, RenewalLinesForm } from './BillEditor';
 
 /**
  * A mandir's subscription the way billing tools show it (Chargebee / Zoho):
@@ -11,20 +12,33 @@ import { useCan } from '../auth/permissions';
  *                 year they paid X, next year they pay Y" (migration 096)
  *   Terms         every term so far: price, paid, outstanding
  *
- * GET /admin/tenants/:id/billing-summary; PUT …/next-renewal-price.
+ * GET /admin/tenants/:id/billing-summary; PUT …/next-renewal-price, and
+ * PUT …/renewal-lines for a next term made of several charges, priced with
+ * GST included (migration 102) — "next year everything together ₹14,000".
  */
 interface Term {
   id: string; invoice_number: string; period_start: string; period_end: string; plan_name: string | null; billing_cycle: string | null;
   subtotal_paise: number; total_paise: number; paid_paise: number; status: string; last_paid_at: string | null;
+  /** Billed with GST included (migration 102): the total is the price. */
+  price_includes_gst?: boolean;
 }
 interface Summary {
   subscription: { id: string; status: string; plan: string | null; plan_display: string | null; billing_cycle: string; current_period_start: string | null; current_period_end: string | null; is_custom_price: boolean } | null;
   current_term: Term | null;
-  next_renewal: { date: string | null; usual_price_paise: number; price_paise: number; agreed: boolean; ongoing: boolean; note: string | null; set_by: string | null; set_at: string | null; invoice: Term | null } | null;
+  next_renewal: {
+    date: string | null; usual_price_paise: number; price_paise: number; agreed: boolean; ongoing: boolean; note: string | null; set_by: string | null; set_at: string | null; invoice: Term | null;
+    agreed_lines?: { lines: ApiLine[]; includes_gst: boolean; ongoing: boolean; note: string | null; taxable_paise: number; gst_paise: number; total_paise: number; set_by: string | null; set_at: string | null } | null;
+  } | null;
   terms: Term[];
 }
 
 const termLabel = (t: { period_start: string; period_end: string }) => `${formatDate(t.period_start)} → ${formatDate(t.period_end)}`;
+/** "₹15,999 incl. GST" for a bill priced with GST, "₹9,999 + GST = ₹11,798.82" for one priced before it. */
+function TermPrice({ t }: { t: Term }) {
+  return t.price_includes_gst
+    ? <div className="term-price">{formatPaise(t.total_paise)} <span className="muted">incl. GST</span></div>
+    : <div className="term-price">{formatPaise(t.subtotal_paise)} <span className="muted">+ GST = {formatPaise(t.total_paise)}</span></div>;
+}
 function PaidState({ t }: { t: Term }) {
   if (t.status === 'paid') return <span className="badge green">paid{t.last_paid_at ? ` ${formatDate(t.last_paid_at)}` : ''}</span>;
   if (t.paid_paise > 0) return <span className="badge partially_paid">part paid · {formatPaise(t.total_paise - t.paid_paise)} due</span>;
@@ -34,7 +48,7 @@ function PaidState({ t }: { t: Term }) {
 export function SubscriptionTerms({ tenantId, onChanged }: { tenantId: string; onChanged: (msg: string) => void }) {
   const [s, setS] = useState<Summary | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState<false | 'lines' | 'price'>(false);
   const canBill = useCan('billing.manage');
   const load = useCallback(() => {
     api<Summary>(`/admin/tenants/${tenantId}/billing-summary`).then((r) => setS(r.data)).catch(setError);
@@ -47,6 +61,7 @@ export function SubscriptionTerms({ tenantId, onChanged }: { tenantId: string; o
   const nr = s.next_renewal!;
   const cycleWord = sub.billing_cycle === 'yearly' ? 'year' : 'month';
   const cur = s.current_term;
+  const al = nr.agreed_lines ?? null;
   const change = nr.agreed && nr.usual_price_paise ? Math.round(((nr.price_paise - nr.usual_price_paise) / nr.usual_price_paise) * 1000) / 10 : null;
 
   return (
@@ -65,7 +80,7 @@ export function SubscriptionTerms({ tenantId, onChanged }: { tenantId: string; o
           <div className="term-period">{sub.current_period_start ? termLabel({ period_start: sub.current_period_start, period_end: sub.current_period_end ?? sub.current_period_start }) : '—'}</div>
           {cur ? (
             <>
-              <div className="term-price">{formatPaise(cur.subtotal_paise)} <span className="muted">+ GST = {formatPaise(cur.total_paise)}</span></div>
+              <TermPrice t={cur} />
               <div><PaidState t={cur} /></div>
               <div className="sub mono">{cur.invoice_number}</div>
             </>
@@ -76,9 +91,33 @@ export function SubscriptionTerms({ tenantId, onChanged }: { tenantId: string; o
           <div className="term-k">Next renewal{nr.date ? ` · ${formatDate(nr.date)}` : ''}</div>
           {nr.invoice ? (
             <>
-              <div className="term-price">{formatPaise(nr.invoice.subtotal_paise)} <span className="muted">+ GST = {formatPaise(nr.invoice.total_paise)}</span></div>
+              <TermPrice t={nr.invoice} />
               <div><PaidState t={nr.invoice} /></div>
-              <div className="sub">Already invoiced — {nr.invoice.invoice_number}. To change it, re-price that invoice below.</div>
+              <div className="sub">Already billed — {nr.invoice.invoice_number}. To change it, edit that bill below.</div>
+            </>
+          ) : al ? (
+            <>
+              <div className="term-price" data-testid="next-price">{formatPaise(al.total_paise)} <span className="muted">{al.includes_gst ? 'incl.' : 'with'} GST</span></div>
+              <ul className="sub" style={{ margin: '4px 0', paddingLeft: 18 }} data-testid="next-lines">
+                {al.lines.map((l, i) => <li key={i}>{l.description} — {formatPaise(Number(l.amount_paise))}{al.includes_gst ? '' : ` + ${Number(l.gst_rate)}% GST`}</li>)}
+              </ul>
+              <div className="sub">
+                <b>Agreed charges</b> · {al.ongoing ? 'from this renewal onwards' : 'for this renewal only'}
+                {' · '}taxable {formatPaise(al.taxable_paise)} + GST {formatPaise(al.gst_paise)}
+                {al.note ? <> · “{al.note}”</> : null}
+                {al.set_by ? <> · set by {al.set_by}{al.set_at ? ` on ${formatDate(al.set_at)}` : ''}</> : null}
+              </div>
+              {canBill && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                  <button className="btn sm primary" data-testid="edit-next-lines" onClick={() => setEditing('lines')}>Change next term's charges</button>
+                  <button className="btn sm" onClick={async () => {
+                    try {
+                      await api(`/admin/tenants/${tenantId}/next-renewal-price`, { method: 'PUT', body: { amount_paise: null } });
+                      load(); onChanged('Next renewal back to the usual price.');
+                    } catch (e) { setError(e); }
+                  }}>Use the usual price</button>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -93,7 +132,8 @@ export function SubscriptionTerms({ tenantId, onChanged }: { tenantId: string; o
               ) : <div className="sub">The usual price for this plan{sub.is_custom_price ? ' (custom)' : ''}.</div>}
               {canBill && (
                 <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                  <button className="btn sm primary" data-testid="edit-next-price" onClick={() => setEditing(true)}>{nr.agreed ? 'Change next renewal price' : 'Set next renewal price'}</button>
+                  <button className="btn sm primary" data-testid="edit-next-lines" onClick={() => setEditing('lines')}>Set next term's charges (GST incl.)</button>
+                  <button className="btn sm" data-testid="edit-next-price" onClick={() => setEditing('price')}>{nr.agreed ? 'Change price before GST' : 'Price before GST'}</button>
                   {nr.agreed && (
                     <button className="btn sm" onClick={async () => {
                       try {
@@ -132,7 +172,18 @@ export function SubscriptionTerms({ tenantId, onChanged }: { tenantId: string; o
         </>
       )}
 
-      {editing && (
+      {editing === 'lines' && (
+        <Modal title="Next term's charges" wide onClose={() => setEditing(false)}>
+          <RenewalLinesForm
+            tenantId={tenantId}
+            cycleWord={cycleWord}
+            date={nr.date}
+            initial={al ? { lines: al.lines, includes_gst: al.includes_gst, ongoing: al.ongoing, note: al.note } : null}
+            onDone={(msg) => { setEditing(false); load(); onChanged(msg); }}
+          />
+        </Modal>
+      )}
+      {editing === 'price' && (
         <Modal title="Next renewal price" onClose={() => setEditing(false)}>
           <NextPriceForm
             tenantId={tenantId}

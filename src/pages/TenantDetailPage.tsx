@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../components/PageHeader';
 import { useCan } from '../auth/permissions';
 import { SubscriptionTerms } from '../components/SubscriptionTerms';
+import { BillEditor, BillHistory } from '../components/BillEditor';
 import { DeploymentPill } from './TenantsPage';
 import { api, formatDate, formatPaise, openReceipt } from '../api/client';
 import { PhoneInput } from '../components/PhoneInput';
@@ -571,8 +572,9 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
   const [error, setError] = useState<unknown>(null);
   const [linkUrl, setLinkUrl] = useState<string | null>(null);
   const [mandateLink, setMandateLink] = useState<string | null>(null);
-  /** Invoice being re-priced — only ever one with money still owing. */
-  const [repricing, setRepricing] = useState<Invoice | null>(null);
+  /** The bill editor: 'new' raises one, an invoice edits it (migration 102). */
+  const [billing, setBilling] = useState<'new' | Invoice | null>(null);
+  const [history, setHistory] = useState<Invoice | null>(null);
   const [recording, setRecording] = useState<Invoice | null>(null);
   const [cancelling, setCancelling] = useState<{ invoice: Invoice; payment: InvoicePayment } | null>(null);
   const canBill = useCan('billing.manage');
@@ -626,10 +628,13 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
       </div>
 
       <div className="card">
-        <h2>Invoices</h2>
-        <p className="muted" style={{ marginTop: -8 }}>
-          An invoice can be paid in parts. Each payment gets its own receipt; the invoice lists them all
-          with the balance still due, so once settled it is the single document covering every payment.
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0 }}>Invoices</h2>
+          {canBill && <button className="btn primary" data-testid="new-bill" onClick={() => setBilling('new')}>New bill</button>}
+        </div>
+        <p className="muted" style={{ marginTop: 6 }}>
+          A bill can carry any charges — subscription, website, hosting, domain, setup, anything else — priced with GST
+          included. It can be paid in parts; each payment gets its own receipt and the bill lists them all with the balance due.
         </p>
         {linkUrl && (
           <div className="success-box" data-testid="payment-link">
@@ -649,8 +654,26 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
               return (
                 <Fragment key={inv.id}>
                   <tr>
-                    <td className="mono">{inv.invoiceNumber}</td>
-                    <td>{formatDate(inv.periodStart)} → {formatDate(inv.periodEnd)}</td>
+                    <td className="mono" style={{ whiteSpace: 'nowrap' }}>
+                      {inv.invoiceNumber}
+                      <div className="sub">{formatDate(inv.invoiceDate ?? inv.createdAt ?? null)}{inv.editCount ? ` · edited ${inv.editCount}×` : ''}</div>
+                    </td>
+                    <td>
+                      {(() => {
+                        const lines = inv.lines ?? [];
+                        const sub = lines.find((l) => l.item_type === 'subscription' && l.period_start && l.period_end);
+                        return (
+                          <>
+                            {!lines.length || sub ? <>{formatDate(sub?.period_start ?? inv.periodStart)} → {formatDate(sub?.period_end ?? inv.periodEnd)}</> : <span className="muted">—</span>}
+                            {lines.length > 0 && (
+                              <div className="muted small" data-testid={`lines-${inv.invoiceNumber}`}>
+                                {lines.map((l) => `${l.description} ${formatPaise(l.total_paise)}`).join(' · ')}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>{(() => {
                       // Pay-by date (migration 095), or issue + 15 days on an older invoice.
                       const due = inv.dueDate ? new Date(inv.dueDate) : inv.createdAt ? new Date(new Date(inv.createdAt).getTime() + 15 * 86400000) : null;
@@ -661,7 +684,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                     <td>
                       {formatPaise(inv.totalPaise)}
                       <div className="muted small">
-                        {formatPaise(inv.totalPaise - inv.gstAmountPaise)} + GST {formatPaise(inv.gstAmountPaise)}
+                        {inv.priceIncludesGst ? 'incl. GST ' + formatPaise(inv.gstAmountPaise) : <>{formatPaise(inv.totalPaise - inv.gstAmountPaise)} + GST {formatPaise(inv.gstAmountPaise)}</>}
                         {inv.discountPaise ? ` · − ${formatPaise(inv.discountPaise)} discount` : ''}
                       </div>
                     </td>
@@ -688,12 +711,17 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                             {inv.amountPaidPaise ? 'Link for balance' : 'Payment link'}
                           </button>
                         )}
-                        {/* Change the amount agreed with this mandir while money
-                            is still owing. Refused once fully paid — a paid tax
-                            invoice is corrected by void + reissue, not an UPDATE. */}
-                        {canBill && isOpen && (
-                          <button className="btn sm" data-testid={`reprice-${inv.invoiceNumber}`} onClick={() => setRepricing(inv)}>
-                            Re-price
+                        {/* Number, dates, charges — paid or not. A bill with money
+                            on it needs a reason and can never total less than was
+                            received; every earlier version is kept (migration 102). */}
+                        {canBill && inv.status !== 'void' && (
+                          <button className="btn sm" data-testid={`edit-bill-${inv.invoiceNumber}`} onClick={() => setBilling(inv)}>
+                            Edit
+                          </button>
+                        )}
+                        {!!inv.editCount && (
+                          <button className="btn sm" data-testid={`bill-history-${inv.invoiceNumber}`} onClick={() => setHistory(inv)}>
+                            History
                           </button>
                         )}
                         {inv.status !== 'void' && (
@@ -765,7 +793,7 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
                 </Fragment>
               );
             })}
-            {invoices.length === 0 && <tr><td colSpan={7} className="muted">No invoices.</td></tr>}
+            {invoices.length === 0 && <tr><td colSpan={8} className="muted">No invoices.</td></tr>}
           </tbody>
         </table>
         {/* A link already created for an invoice is kept on the row, so support
@@ -800,12 +828,18 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
           />
         </Modal>
       )}
-      {repricing && (
-        <Modal title={`Re-price ${repricing.invoiceNumber}`} onClose={() => setRepricing(null)}>
-          <RepriceInvoiceForm
-            invoice={repricing}
-            onDone={() => { setRepricing(null); setLinkUrl(null); load(); onChanged('Invoice re-priced'); }}
+      {billing && (
+        <Modal title={billing === 'new' ? `New bill — ${tenant.name}` : `Edit ${billing.invoiceNumber}`} wide onClose={() => setBilling(null)}>
+          <BillEditor
+            tenantId={tenant.id}
+            invoiceId={billing === 'new' ? undefined : billing.id}
+            onDone={(msg) => { setBilling(null); setLinkUrl(null); load(); onChanged(msg); }}
           />
+        </Modal>
+      )}
+      {history && (
+        <Modal title={`History — ${history.invoiceNumber}`} wide onClose={() => setHistory(null)}>
+          <BillHistory invoiceId={history.id} />
         </Modal>
       )}
     </div>
@@ -955,56 +989,6 @@ function CancelPaymentForm({ invoice, payment, onDone }: { invoice: Invoice; pay
         <input value={reason} onChange={(e) => setReason(e.target.value)} required maxLength={300}
           placeholder="Cheque bounced / entered twice / wrong amount" data-testid="cancel-payment-reason" />
       </label>
-    </ActionForm>
-  );
-}
-
-/**
- * Re-price an invoice while money is still owing on it: the "we agreed a
- * different amount with this mandir" case, before it pays or on the balance
- * after an instalment. Amounts are entered in rupees and converted here — the
- * API only accepts paise.
- */
-function RepriceInvoiceForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
-  const [f, setF] = useState({
-    subtotal: String(invoice.subtotalPaise / 100),
-    discount: String((invoice.discountPaise ?? 0) / 100),
-    charges: String((invoice.additionalChargesPaise ?? 0) / 100),
-    discount_note: invoice.discountNote ?? '',
-    note: '',
-  });
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setF({ ...f, [k]: e.target.value });
-
-  return (
-    <ActionForm
-      submitLabel="Save price"
-      onDone={onDone}
-      onSubmit={async () => {
-        await api(`/admin/invoices/${invoice.id}`, {
-          method: 'PATCH',
-          body: {
-            subtotal_paise: Math.round(Number(f.subtotal || 0) * 100),
-            discount_paise: Math.round(Number(f.discount || 0) * 100),
-            additional_charges_paise: Math.round(Number(f.charges || 0) * 100),
-            discount_note: f.discount_note || undefined,
-            note: f.note || undefined,
-          },
-        });
-      }}
-    >
-      <p className="muted" style={{ marginTop: 0 }}>
-        GST is recalculated on the net (subtotal − discount + charges). Any payment link already sent quotes the
-        old figure, so it is cleared — create a new one afterwards.
-        {invoice.amountPaidPaise > 0 && ` ${formatPaise(invoice.amountPaidPaise)} has already been received, so the new total cannot be lower than that.`}
-      </p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <label className="field"><span>Subtotal (₹)</span><input type="number" value={f.subtotal} onChange={set('subtotal')} /></label>
-        <label className="field"><span>Discount (₹)</span><input type="number" value={f.discount} onChange={set('discount')} /></label>
-        <label className="field"><span>Additional charges (₹)</span><input type="number" value={f.charges} onChange={set('charges')} /></label>
-        <label className="field"><span>Discount label (on the invoice)</span><input value={f.discount_note} onChange={set('discount_note')} /></label>
-      </div>
-      <label className="field"><span>Internal note</span><input value={f.note} onChange={set('note')} /></label>
     </ActionForm>
   );
 }
