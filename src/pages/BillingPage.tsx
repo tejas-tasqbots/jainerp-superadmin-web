@@ -17,6 +17,8 @@ import { useCan } from '../auth/permissions';
  *                 yet — raise it here, one by one, on purpose
  *   Bill numbers  the one invoice series (migration 102): prefix, digits and
  *                 the next number — GST Rule 46, at most 16 characters
+ *   Bank details  Tasqbots' account (migration 103), printed on every bill
+ *                 with money still owed — Super admin only to change
  *
  * Customers only: demo mandirs (migration 094) are left out.
  */
@@ -40,9 +42,14 @@ interface RenewalRow {
   agreed_lines?: { description: string; total_paise: number }[] | null;
 }
 interface Series { prefix: string; pad: number; fy: string; next_number: number; next_invoice_number: string }
+interface Bank {
+  account_name: string | null; bank_name: string | null; account_number: string | null; ifsc: string | null;
+  branch: string | null; account_type: 'current' | 'savings' | null; upi_id: string | null; note: string | null;
+  updated_at: string | null; updated_by_name: string | null;
+}
 
-type Tab = 'overview' | 'invoices' | 'renewals' | 'numbers';
-const TABS: Array<[Tab, string]> = [['overview', 'Overview'], ['invoices', 'Invoices'], ['renewals', 'Renewals due'], ['numbers', 'Bill numbers']];
+type Tab = 'overview' | 'invoices' | 'renewals' | 'numbers' | 'bank';
+const TABS: Array<[Tab, string]> = [['overview', 'Overview'], ['invoices', 'Invoices'], ['renewals', 'Renewals due'], ['numbers', 'Bill numbers'], ['bank', 'Bank details']];
 
 export function BillingPage() {
   const [params, setParams] = useSearchParams();
@@ -77,6 +84,7 @@ export function BillingPage() {
         {tab === 'invoices' && <Invoices />}
         {tab === 'renewals' && <Renewals onChanged={loadSummary} />}
         {tab === 'numbers' && <BillNumbers />}
+        {tab === 'bank' && <BankDetails />}
       </div>
     </div>
   );
@@ -377,6 +385,101 @@ function BillNumbers() {
           </p>
         </ActionForm>
       ) : <p className="muted">Only billing staff can change the numbering.</p>}
+      {toast.node}
+    </div>
+  );
+}
+
+/**
+ * Where trusts pay Tasqbots. Printed under "Pay by bank transfer / UPI" on every
+ * bill — the console's, the trust's own copy and the sign-up invoice — while
+ * money is still owed on it; never on a paid or void bill. Only a Super admin
+ * may change it (the account on a bill is where every trust's money goes), and
+ * each change is audited with what it replaced.
+ */
+function BankDetails() {
+  const [b, setB] = useState<Bank | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const empty = { account_name: '', bank_name: '', account_number: '', ifsc: '', branch: '', account_type: 'current', upi_id: '', note: '' };
+  const [f, setF] = useState(empty);
+  const canSet = useCan('platform.manage');
+  const toast = useToast();
+  const fill = (d: Bank) => setF({
+    account_name: d.account_name ?? '', bank_name: d.bank_name ?? '', account_number: d.account_number ?? '',
+    ifsc: d.ifsc ?? '', branch: d.branch ?? '', account_type: d.account_type ?? 'current', upi_id: d.upi_id ?? '', note: d.note ?? '',
+  });
+  const load = useCallback(() => {
+    api<Bank>('/admin/billing/bank-details').then((r) => { setB(r.data); fill(r.data); setError(null); }).catch(setError);
+  }, []);
+  useEffect(load, [load]);
+  if (!b) return <div><ErrorBox error={error} /><p className="muted">Loading…</p></div>;
+
+  const set = (k: keyof typeof empty) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const isSet = !!(b.account_number || b.upi_id);
+  const current: Array<[string, string | null]> = [
+    ['Account holder', b.account_name], ['Bank', b.bank_name], ['Account number', b.account_number], ['IFSC', b.ifsc],
+    ['Branch', b.branch], ['Account type', b.account_type], ['UPI ID', b.upi_id], ['Note', b.note],
+  ];
+  return (
+    <div className="card" style={{ maxWidth: 760 }} data-testid="bank-details">
+      <ErrorBox error={error} />
+      <h2>Bank details</h2>
+      <p className="muted" style={{ marginTop: -6 }}>
+        Printed on every bill with money still owed (the bill in this console, the trust&apos;s own copy and the sign-up
+        invoice) under <b>Pay by bank transfer / UPI</b>, with the invoice number to quote. Paid and void bills do not
+        show it. {isSet
+          ? <>Last changed {b.updated_at ? formatDate(b.updated_at) : ''}{b.updated_by_name ? ` by ${b.updated_by_name}` : ''}.</>
+          : <b data-testid="bank-not-set">Not set yet: bills print no bank details.</b>}
+      </p>
+      {canSet ? (
+        <ActionForm draft={false} successMessage={null} submitLabel="Save bank details"
+          onSubmit={async () => {
+            const { data } = await api<Bank>('/admin/billing/bank-details', { method: 'PUT', body: f });
+            setB(data); fill(data);
+            toast.show(data.account_number || data.upi_id ? 'Saved. Unpaid bills now show these bank details.' : 'Cleared. Bills print no bank details.');
+          }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <label className="field"><span>Account holder&apos;s name</span>
+              <input value={f.account_name} maxLength={150} onChange={set('account_name')} placeholder="Tasqbots Technologies Pvt. Ltd." data-testid="bank-account-name" />
+            </label>
+            <label className="field"><span>Bank</span>
+              <input value={f.bank_name} maxLength={150} onChange={set('bank_name')} data-testid="bank-name" />
+            </label>
+            <label className="field"><span>Account number</span>
+              <input value={f.account_number} maxLength={24} inputMode="numeric" autoComplete="off" onChange={set('account_number')} data-testid="bank-account-number" />
+            </label>
+            <label className="field"><span>IFSC</span>
+              <input value={f.ifsc} maxLength={11} autoComplete="off" onChange={(e) => setF({ ...f, ifsc: e.target.value.toUpperCase() })} data-testid="bank-ifsc" />
+              <span className="hint">11 characters: 4 letters, 0, then 6 letters or digits.</span>
+            </label>
+            <label className="field"><span>Branch</span>
+              <input value={f.branch} maxLength={150} onChange={set('branch')} data-testid="bank-branch" />
+            </label>
+            <label className="field"><span>Account type</span>
+              <select value={f.account_type} onChange={set('account_type')} data-testid="bank-account-type">
+                <option value="current">Current</option>
+                <option value="savings">Savings</option>
+              </select>
+            </label>
+            <label className="field"><span>UPI ID (optional)</span>
+              <input value={f.upi_id} maxLength={100} autoComplete="off" onChange={set('upi_id')} data-testid="bank-upi" />
+            </label>
+            <label className="field"><span>Note on the bill (optional)</span>
+              <input value={f.note} maxLength={300} onChange={set('note')} data-testid="bank-note" />
+            </label>
+          </div>
+          <p className="muted" style={{ margin: '4px 0 10px' }}>
+            Leave every field empty and save to take the bank details off the bills.
+          </p>
+        </ActionForm>
+      ) : <p className="muted">Only a Super admin can change where trusts pay.</p>}
+      {isSet && (
+        <dl style={{ marginTop: 12 }} data-testid="bank-current">
+          {current.filter(([, v]) => v).map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', gap: 12 }}><dt className="muted" style={{ minWidth: 140 }}>{k}</dt><dd className="mono" style={{ margin: 0 }}>{v}</dd></div>
+          ))}
+        </dl>
+      )}
       {toast.node}
     </div>
   );
