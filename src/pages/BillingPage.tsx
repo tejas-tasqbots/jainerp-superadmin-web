@@ -30,7 +30,9 @@ interface Summary {
   renewals_due_30d: number; renewals_due_30d_paise: number;
 }
 interface InvoiceRow {
-  id: string; invoice_number: string; tenant_id: string | null; mandir_name: string | null; plan_name: string | null; billing_cycle: string | null;
+  id: string; invoice_number: string; tenant_id: string | null; mandir_name: string | null;
+  /** An offline mandir's bill (migration 104). */
+  offline_mandir_id?: string | null; offline_reference?: string | null; plan_name: string | null; billing_cycle: string | null;
   period_start: string; period_end: string; status: string; total_paise: number; amount_paid_paise: number; balance_paise: number;
   issued_on: string; due_on: string; days_overdue: number; due_assumed: boolean;
 }
@@ -233,7 +235,12 @@ function Invoices() {
             {rows.map((i) => (
               <tr key={i.id} data-testid={`inv-${i.invoice_number}`}>
                 <td className="mono">{i.invoice_number}<div className="sub">{i.plan_name ?? ''}{i.billing_cycle ? ` · ${i.billing_cycle}` : ''}</div></td>
-                <td>{i.tenant_id ? <Link to={`/mandirs/${i.tenant_id}`}>{i.mandir_name}</Link> : i.mandir_name ?? '—'}</td>
+                <td>
+                  {i.tenant_id ? <Link to={`/mandirs/${i.tenant_id}`}>{i.mandir_name}</Link>
+                    : i.offline_mandir_id ? <Link to={`/offline-mandirs/${i.offline_mandir_id}`}>{i.mandir_name}</Link>
+                    : i.mandir_name ?? '—'}
+                  {i.offline_reference && <div className="muted small">Offline · {i.offline_reference}</div>}
+                </td>
                 <td style={{ whiteSpace: 'nowrap' }}>{formatDate(i.issued_on)}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {formatDate(i.due_on)}

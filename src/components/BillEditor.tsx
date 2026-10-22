@@ -191,10 +191,21 @@ interface EditView {
   edit_count: number; legacy: boolean; lines: ApiLine[];
 }
 
-/** Raise a new bill for a trust, or edit one (`invoiceId`). */
-export function BillEditor({ tenantId, invoiceId, onDone }: { tenantId: string; invoiceId?: string; onDone: (msg: string) => void }) {
+/**
+ * Raise a new bill for a trust, or edit one (`invoiceId`). The customer is an
+ * online mandir (`tenantId`) or a JainERP Offline one (`offlineMandirId`,
+ * migration 104), whose current licence term (`defaultTerm`) pre-fills a
+ * subscription line's dates the way an online mandir's period does.
+ */
+export function BillEditor({ tenantId, offlineMandirId, defaultTerm, invoiceId, onDone }: {
+  tenantId?: string; offlineMandirId?: string; defaultTerm?: Term; invoiceId?: string; onDone: (msg: string) => void;
+}) {
   const editing = !!invoiceId;
-  const [rows, setRows] = useState<LineRow[]>([newLine('subscription')]);
+  // An offline mandir's current licence term pre-fills the subscription line.
+  const [rows, setRows] = useState<LineRow[]>(() => {
+    const first = newLine('subscription');
+    return [!invoiceId && offlineMandirId && defaultTerm ? { ...first, period_start: defaultTerm.start, period_end: defaultTerm.end } : first];
+  });
   const [includesGst, setIncludesGst] = useState(true);
   const [number, setNumber] = useState('');
   const [nextNumber, setNextNumber] = useState<string | null>(null);
@@ -204,7 +215,7 @@ export function BillEditor({ tenantId, invoiceId, onDone }: { tenantId: string; 
   const [note, setNote] = useState('');
   const [reason, setReason] = useState('');
   const [view, setView] = useState<EditView | null>(null);
-  const [term, setTerm] = useState<Term>(null);
+  const [term, setTerm] = useState<Term>(defaultTerm ?? null);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
@@ -220,6 +231,7 @@ export function BillEditor({ tenantId, invoiceId, onDone }: { tenantId: string; 
       }).catch(setError);
     } else {
       api<{ next_invoice_number: string }>('/admin/billing/series').then(({ data }) => setNextNumber(data.next_invoice_number)).catch(() => setNextNumber(null));
+      if (offlineMandirId) return; // its term came in with the first line
       api<{ subscription: { current_period_start: string | null; current_period_end: string | null } | null }>(`/admin/tenants/${tenantId}/billing-summary`)
         .then(({ data }) => {
           const sub = data.subscription;
@@ -230,7 +242,7 @@ export function BillEditor({ tenantId, invoiceId, onDone }: { tenantId: string; 
         })
         .catch(() => setTerm(null));
     }
-  }, [editing, invoiceId, tenantId]);
+  }, [editing, invoiceId, tenantId, offlineMandirId]);
 
   const total = useMemo(() => rows.reduce((s, r) => s + priceRow(r, includesGst).total, 0), [rows, includesGst]);
   const received = view?.amount_paid_paise ?? 0;
@@ -256,7 +268,10 @@ export function BillEditor({ tenantId, invoiceId, onDone }: { tenantId: string; 
         };
         const { data } = editing
           ? await api<{ invoice_number: string; total_paise: number }>(`/admin/invoices/${invoiceId}`, { method: 'PUT', body })
-          : await api<{ invoice_number: string; total_paise: number }>(`/admin/tenants/${tenantId}/invoices`, { method: 'POST', body });
+          : await api<{ invoice_number: string; total_paise: number }>(
+            offlineMandirId ? `/admin/offline-mandirs/${offlineMandirId}/invoices` : `/admin/tenants/${tenantId}/invoices`,
+            { method: 'POST', body },
+          );
         onDone(editing
           ? `${data.invoice_number} saved — ${formatPaise(Number(data.total_paise))}.`
           : `Bill ${data.invoice_number} raised for ${formatPaise(Number(data.total_paise))}. Record the payment when it arrives.`);
