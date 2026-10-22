@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, formatDate, formatPaise, openReceipt } from '../api/client';
 import type { Invoice, InvoicePayment } from '../api/types';
 import { useCan } from '../auth/permissions';
@@ -20,7 +20,7 @@ export type BillCustomer =
   | { tenantId: string }
   | { offlineMandirId: string; term?: { start: string; end: string } | null };
 
-export function InvoicesCard({ listPath, customer, customerName, onChanged, onLoaded, reloadKey }: {
+export function InvoicesCard({ listPath, customer, customerName, onChanged, onLoaded, reloadKey, title, intro }: {
   listPath: string;
   customer: BillCustomer;
   customerName: string;
@@ -29,6 +29,10 @@ export function InvoicesCard({ listPath, customer, customerName, onChanged, onLo
   onLoaded?: (invoices: Invoice[]) => void;
   /** Change it to make the list load again (e.g. a bill raised elsewhere on the page). */
   reloadKey?: unknown;
+  /** Card heading; "Invoices" by default. */
+  title?: string;
+  /** Replaces the paragraph under the heading. */
+  intro?: ReactNode;
 }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -58,12 +62,14 @@ export function InvoicesCard({ listPath, customer, customerName, onChanged, onLo
       <ErrorBox error={error} />
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-          <h2 style={{ margin: 0 }}>Invoices</h2>
+          <h2 style={{ margin: 0 }}>{title ?? 'Invoices'}</h2>
           {canBill && <button className="btn primary" data-testid="new-bill" onClick={() => setBilling('new')}>New bill</button>}
         </div>
         <p className="muted" style={{ marginTop: 6 }}>
-          A bill can carry any charges — subscription, website, hosting, domain, setup, anything else — priced with GST
-          included. It can be paid in parts; each payment gets its own receipt and the bill lists them all with the balance due.
+          {intro ?? <>
+            A bill can carry any charges — subscription, website, hosting, domain, setup, anything else — priced with GST
+            included. It can be paid in parts; each payment gets its own receipt and the bill lists them all with the balance due.
+          </>}
         </p>
         {linkUrl && (
           <div className="success-box" data-testid="payment-link">

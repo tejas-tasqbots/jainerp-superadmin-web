@@ -608,6 +608,19 @@ function BillingTab({ tenant, onChanged }: { tenant: TenantDetail; onChanged: (m
         onChanged={onChanged}
         onLoaded={setInvoices}
       />
+      {/* A mandir on both: its JainERP Offline licence is billed to the offline
+          side (migration 104) — shown here too, so its whole account is on one tab. */}
+      {tenant.offline_mandir && (
+        <InvoicesCard
+          title={`JainERP Offline bills — ${tenant.offline_mandir.reference}`}
+          intro={<>Bills for this mandir&apos;s offline licence. Licences are issued and renewed on its{' '}
+            <Link to={`/offline-mandirs/${tenant.offline_mandir.id}`}>offline page</Link>.</>}
+          listPath={`/admin/offline-mandirs/${tenant.offline_mandir.id}/invoices`}
+          customer={{ offlineMandirId: tenant.offline_mandir.id }}
+          customerName={`${tenant.name} (offline)`}
+          onChanged={onChanged}
+        />
+      )}
     </div>
   );
 }
