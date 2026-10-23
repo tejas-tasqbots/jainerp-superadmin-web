@@ -32,6 +32,11 @@ on:
   # Merge main -> prod first; the branch is still the record of what is in
   # production, it just no longer triggers by itself.
   workflow_dispatch:
+    inputs:
+      deploy_pass:
+        description: 'Enter DEPLOY_PASS to authorize this dev deployment'
+        required: true
+        type: number
 
 concurrency:
   # Per service: two merges in quick succession must not race each other
@@ -49,6 +54,21 @@ jobs:
       id-token: write # required for WIF; nothing else needs write
 
     steps:
+      - name: Validate DEPLOY_PASS
+        env:
+          INPUT_PASS: ${{ inputs.deploy_pass }}
+          EXPECTED_PASS: ${{ secrets.DEPLOY_PASS }}
+        run: |
+          if [ -z "$EXPECTED_PASS" ]; then
+            echo "::error::DEPLOY_PASS secret is not set in the 'development' environment."
+            exit 1
+          fi
+          if [ "$INPUT_PASS" != "$EXPECTED_PASS" ]; then
+            echo "::error::Invalid deployment password provided. Aborting deploy."
+            exit 1
+          fi
+          echo "Deploy password verified." >>$GITHUB_STEP_SUMMARY
+
       - name: Check the caller passed everything
         env:
           IMAGE_REPO: ${{ secrets.GCP_IMAGE_REPO }}
